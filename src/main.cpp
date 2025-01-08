@@ -415,7 +415,8 @@ int main()
 
     unsigned int program;
     if (!LoadShader(program, { "../data/shaders/basic.vert", "../data/shaders/basic.frag" }))
-        return 1;
+        if (!LoadShader(program, { "./data/shaders/basic.vert", "./data/shaders/basic.frag" }))
+            return 1;
 
     sleveldata_t leveldata;
 
