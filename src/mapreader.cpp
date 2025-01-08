@@ -351,7 +351,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 			poly.uvs[0].y = dfx.Read<byte>(0, true) / 255.f;
 			poly.uvs[1].x = dfx.Read<byte>(2, true) / 255.f;
 			poly.uvs[1].y = dfx.Read<byte>(0, true) / 255.f;
-			poly.materialID = dfx.Read<u16>(0, true);
+			poly.materialID = dfx.Read<u16>(0, true) % 0x1000;
 			poly.uvs[2].x = dfx.Read<byte>(0, true) / 255.f;
 			poly.uvs[2].y = dfx.Read<byte>(0, true) / 255.f;
 			dfx.baseOffset = tempOffset;
@@ -367,6 +367,10 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 					poly.uvs[j].x /= (float)level.sheet.w;
 					poly.uvs[j].y /= (float)level.sheet.h;
 				}
+			}
+			else
+			{
+				printf("Oops, you need to put the CD in the CD\n");
 			}
 
 			model->polygons.push_back(poly);
