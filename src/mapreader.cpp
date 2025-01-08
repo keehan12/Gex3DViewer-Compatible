@@ -502,7 +502,7 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
 	glm::vec3 rot = { dfx.Read<i16>(10) * c_PI_2_FROM_1024, dfx.Read<i16>(12) * -c_PI_2_FROM_1024, dfx.Read<i16>(14) * c_PI_2_FROM_1024 };
 	glm::vec3 pos = { -dfx.Read<i16>(16) * 0.001f, -dfx.Read<i16>(20) * 0.001f, dfx.Read<i16>(18) * 0.001f };
-	(*level.models.rbegin())->instances.push_back({ pos, rot });
+	level.models[modelIndex]->instances.push_back({ pos, rot });
 
 }
 

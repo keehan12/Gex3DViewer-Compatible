@@ -412,8 +412,6 @@ int main()
         {{-10, 10, 50}, {0.5f, 0.5f, 0.5f, 0.5f}, {1, 0}},
     };
 
-    OpenLevel(R"(C:\Users\Matt\Desktop\level\looney30.dfx)", leveldata);
-
     bool showTexturePanel = false;
     float textureZoomScale = 1.f;
 
