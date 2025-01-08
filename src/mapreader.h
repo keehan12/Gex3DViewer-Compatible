@@ -18,8 +18,8 @@ struct Model
 {
 	struct vertex_t
 	{
-		short x, y, z;
-		short oX, oY, oZ;
+		int x, y, z;
+		int oX, oY, oZ;
 		unsigned short normalId;
 		unsigned char r, g, b, a;
 	};
@@ -54,6 +54,7 @@ struct level_t
 	ImagePacker::ImageInformationList list;
 	texture_t sheet{ 0, 0, NULL };
 	std::string name;
+	float bgColor[3];
 };
 
 bool LoadLevel(const std::string& filepath, level_t& level);

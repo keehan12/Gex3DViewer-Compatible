@@ -164,7 +164,7 @@ glm::mat4 camera(const glm::mat4& model)
     {
         int w, h;
         glfwGetWindowSize(g_Window, &w, &h);
-        Projection = glm::perspective(glm::pi<float>() * 0.25f, w / (float)h, 0.1f, 100.f);
+        Projection = glm::perspective(glm::pi<float>() * 0.25f, w / (float)h, 0.1f, 1000.f);
         View = glm::lookAt(g_CamPos, g_CamPos + GetForwardVector() * 10.f, GetUpVector());
         cameraInvalidated = false;
     }
@@ -323,6 +323,8 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
     return ptr;
 }
 
+ImVec4 bgColor = { 0xBB / 255.f, 0xF6 / 255.f, 0xF7 / 255.f, 255 };
+
 std::string levelPath, levelName;
 bool OpenLevel(const char* levelPath, sleveldata_t& leveldata)
 {
@@ -355,6 +357,9 @@ bool OpenLevel(const char* levelPath, sleveldata_t& leveldata)
     }
     levelName = leveldata.level.name;
     leveldata.open = true;
+    bgColor.x = leveldata.level.bgColor[0];
+    bgColor.y = leveldata.level.bgColor[1];
+    bgColor.z = leveldata.level.bgColor[2];
 
     for (auto& m : leveldata.level.models)
         mdls.push_back(createobj(m));
@@ -414,8 +419,6 @@ int main()
 
     bool toggleObjectsMenu = false;
 
-    ImVec4 bgColor = { 0xBB / 255.f, 0xF6 / 255.f, 0xF7 / 255.f, 255 };
-
     while(!glfwWindowShouldClose(g_Window))
     {
         glfwPollEvents();
@@ -429,7 +432,7 @@ int main()
             glClearColor(bgColor.x, bgColor.y, bgColor.z, 1.f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
+        //glEnable(GL_CULL_FACE);
 
         // transparent textures bugged rn
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

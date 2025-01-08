@@ -119,6 +119,9 @@ struct levelext_t
 	addr_t modelAddress;
 	u32 nObjects;
 	addr_t objAddress;
+	u32 nSkybox;
+	addr_t skyboxAddress;
+	float skyboxRGB[3];
 };
 
 struct geo_t
@@ -305,6 +308,76 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 	}
 }
 
+void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
+{
+	u32 was = dfx.baseOffset;
+	dfx.baseOffset = levelData.dataOffset + levelData.skyboxAddress;
+
+	model->name = "Skybox";
+	model->instances.push_back({ {0, 0, 0}, {0, 0, 0} });
+
+	for (int i = 0; i < levelData.nSkybox; ++i)
+	{
+		u32 vertexOffset = model->vertices.size();
+		u16 nPoly = dfx.Read<u16>(2, true);
+		addr_t vertAddr = dfx.Read<addr_t>(0, true);
+		addr_t polyAddr = dfx.Read<addr_t>(0, true);
+		u32 nVerts = dfx.Read<u32>(8, true);
+
+		u32 offset = dfx.baseOffset;
+		dfx.baseOffset = levelData.dataOffset + vertAddr;
+		for (u32 v = 0; v < nVerts; ++v)
+		{
+			int x = (short)(dfx.Read<i16>(0, true)) * 10;
+			int y = (short)(dfx.Read<i16>(0, true)) * 10;
+			int z = (short)(dfx.Read<i16>(0, true)) * 10;
+			u16 n = dfx.Read<u16>(0, true);
+			model->vertices.push_back(Model::vertex_t{ x, z, y, x, z, y, n, 128, 128, 128, 255 });
+		}
+
+		dfx.baseOffset = levelData.dataOffset + polyAddr;
+		for (u32 p = 0; p < nPoly; ++p)
+		{
+			Model::polygon_t poly;
+			poly.vertex[0] = dfx.Read<u16>(0, true) + vertexOffset;
+			poly.vertex[1] = dfx.Read<u16>(0, true) + vertexOffset;
+			poly.vertex[2] = dfx.Read<u16>(0, true) + vertexOffset;
+			poly.flags = dfx.Read<u16>(0, true) + vertexOffset;
+
+			addr_t materialAddress = dfx.Read<addr_t>(0, true);
+			u32 tempOffset = dfx.baseOffset;
+			dfx.baseOffset = levelData.dataOffset + materialAddress;
+			poly.uvs[0].x = dfx.Read<byte>(0, true) / 255.f;
+			poly.uvs[0].y = dfx.Read<byte>(0, true) / 255.f;
+			poly.uvs[1].x = dfx.Read<byte>(2, true) / 255.f;
+			poly.uvs[1].y = dfx.Read<byte>(0, true) / 255.f;
+			poly.materialID = dfx.Read<u16>(0, true);
+			poly.uvs[2].x = dfx.Read<byte>(0, true) / 255.f;
+			poly.uvs[2].y = dfx.Read<byte>(0, true) / 255.f;
+			dfx.baseOffset = tempOffset;
+
+			if (auto info = FindImageInfoById(level.list, poly.materialID))
+			{
+				for (int j = 0; j < 3; ++j)
+				{
+					poly.uvs[j].x *= info->width;
+					poly.uvs[j].y *= info->height;
+					poly.uvs[j].x += info->x;
+					poly.uvs[j].y += info->y;
+					poly.uvs[j].x /= (float)level.sheet.w;
+					poly.uvs[j].y /= (float)level.sheet.h;
+				}
+			}
+
+			model->polygons.push_back(poly);
+		}
+
+		dfx.baseOffset = offset;
+	}
+
+	dfx.baseOffset = was;
+}
+
 void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_t geometryAddress)
 {
 	geo_t geo;
@@ -322,6 +395,10 @@ void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_
 
 	ReadVertices(dfx, level, levelData, geo, level.models[0]);
 	ReadPolygons(dfx, level, levelData, geo, level.models[0]);
+
+	auto skybox = std::make_shared<Model>(levelData.skyboxAddress);
+	ReadSkybox(dfx, level, levelData, geo, skybox);
+	level.models.push_back(skybox);
 
 	dfx.baseOffset = levelData.dataOffset;
 }
@@ -742,7 +819,7 @@ std::string GetLevelName(const std::string& levelStr, u32 dataOffsetRaw)
 		{ "kungfu__",
 			{
 				{ 0x00006FC1, "Samurai Night Fever" },
-				{ 0x00006C72, "Lizard in a China Shop" },
+				{ 0x00006C72, "Mao Tse Tongue" },
 				{ 0x00002F95, "Lizard in a China Shop" }
 			}
 		},
@@ -830,6 +907,11 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	levelData.modelAddress = dfx.Read<addr_t>(0x3C);
 	levelData.nObjects = dfx.Read<u32>(0x78);
 	levelData.objAddress = dfx.Read<addr_t>(0x7C);
+	levelData.nSkybox = dfx.Read<u32>(0x20);
+	levelData.skyboxAddress = dfx.Read<u32>(0x24);
+	level.bgColor[0] = dfx.Read<byte>(68) / 255.f;
+	level.bgColor[1] = dfx.Read<byte>(69) / 255.f;
+	level.bgColor[2] = dfx.Read<byte>(70) / 255.f;
 
 	ReadLevelGeometry(dfx, level, levelData, dfx.Read<addr_t>(0));
 
