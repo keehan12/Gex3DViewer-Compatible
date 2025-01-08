@@ -42,8 +42,24 @@ std::string OpenLoadPrompt(const char* filter)
         return buffer;
     return "";
 }
+std::string OpenSavePrompt(const char* filter)
+{
+    OPENFILENAMEA ofn{ sizeof(OPENFILENAMEA) };
+    ofn.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT;
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFilter = filter;
+    ofn.nFilterIndex = 1;
+    ofn.lpstrTitle = "Save File...";
+    char buffer[MAX_PATH + 1]{ 0 };
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = MAX_PATH;
+    if (GetSaveFileNameA(&ofn) == TRUE)
+        return buffer;
+    return "";
+}
 #else
 std::string OpenLoadPrompt(const char* filter) {}
+std::string OpenSavePrompt(const char* filter) {}
 #endif
 
 glm::vec3 g_CamPos = { 0, 0, 0 };
@@ -599,6 +615,56 @@ int main()
                 {
                     for (auto& mdl : leveldata.level.models)
                         mdl->objectVisibility = false;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Dump Object Info"))
+                {
+                    auto path = OpenSavePrompt("JSON File (*.json)\0*.json\0All files (*.*)\0*.*\0");
+                    if (!path.empty())
+                    {
+                        FILE* f = fopen(path.c_str(), "w");
+                        if (f)
+                        {
+                            fwrite("{\n", 2, 1, f);
+                            char buffer[1024];
+                            for(int i = 0; i < leveldata.level.models.size(); ++i)
+                            {
+                                auto& mdl = leveldata.level.models[i];
+                                std::string objName = mdl->name.c_str();
+                                if (objName.empty())
+                                {
+                                    if (mdl->addr == 0)
+                                        objName = "Misc";
+                                    else if (mdl->addr == 0xFFFF'FFFF)
+                                        objName = "Level";
+                                    else
+                                        objName = "???";
+                                }
+                                sprintf(buffer, "\t\"%s\": [\n", objName.c_str());
+                                fwrite(buffer, strnlen(buffer, 1024), 1, f);
+                                for(int j = 0; j < mdl->instances.size(); ++j)
+                                {
+                                    auto& inst = mdl->instances[j];
+                                    sprintf(buffer, "\t\t{ \"pos\": [%d, %d, %d], \"rot\": [%.6f, %.6f, %.6f] }",
+                                        (int)(inst.position.x * 1000),
+                                        (int)(inst.position.y * 1000),
+                                        (int)(inst.position.z * 1000),
+                                        (inst.rotation.x),
+                                        (inst.rotation.y),
+                                        (inst.rotation.z)
+                                    );
+                                    fwrite(buffer, strnlen(buffer, 1024), 1, f);
+                                    if (j + 1 < mdl->instances.size())
+                                        fwrite(",\n", 2, 1, f);
+                                }
+                                fwrite("\n\t]", 3, 1, f);
+                                if (i + 1 < leveldata.level.models.size())
+                                    fwrite(",\n", 2, 1, f);
+                            }
+                            fwrite("\n}", 2, 1, f);
+                            fclose(f);
+                        }
+                    }
                 }
                 for (auto& mdl : leveldata.level.models)
                 {
