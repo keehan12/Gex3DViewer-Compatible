@@ -34,6 +34,7 @@ struct file_t
 	void Close()
 	{
 		delete[] data;
+		data = nullptr;
 		size = 0;
 		baseOffset = 0;
 	}
@@ -842,18 +843,60 @@ void LoadCustomImages()
 			texture_t image;
 			image.w = file.Read<u32>(0);
 			image.h = file.Read<u32>(4);
+
+			const unsigned short nPalette = file.Read<u16>(8);
+			std::vector<glm::vec4> palette;
+			for (int i = 0; i < nPalette; ++i)
+				palette.push_back({
+					file.Read<byte>(i * 4 + 10 + 3) / 255.f,
+					file.Read<byte>(i * 4 + 10 + 2) / 255.f,
+					file.Read<byte>(i * 4 + 10 + 1) / 255.f,
+					file.Read<byte>(i * 4 + 10 + 0) / 255.f,
+				});
+
+			const byte compression = file.Read<byte>(10 + 4 * nPalette);
+			enum CompressionFormat
+			{
+				NONE = 0,
+				RLE = 1
+			};
+
 			image.pixels = new glm::vec4[image.w * image.h];
 			image.deletePixels = false;
-			for (int y = 0; y < image.h; ++y)
-				for (int x = 0; x < image.w; ++x)
+
+			switch (compression)
+			{
+			case NONE:
+				for (int y = 0; y < image.h; ++y)
+					for (int x = 0; x < image.w; ++x)
+					{
+						size_t index = y * image.w + x;
+						image.pixels[index] = palette[file.Read<byte>(10 + 4 * nPalette + 1 + index)];
+					}
+				break;
+
+			case RLE:
+			{
+				const u32 len = file.Read<u32>(10 + 4 * nPalette + 1, true);
+				u32 index = 0;
+				int count = 0;
+				byte pid = 0;
+				for(u32 entryIndex = 0; entryIndex < len / 2; ++entryIndex)
 				{
-					size_t index = y * image.w + x;
-					image.pixels[index].r = file.Read<byte>(8 + 4 * index) / 255.f;
-					image.pixels[index].g = file.Read<byte>(8 + 4 * index + 1) / 255.f;
-					image.pixels[index].b = file.Read<byte>(8 + 4 * index + 2) / 255.f;
-					image.pixels[index].a = file.Read<byte>(8 + 4 * index + 3) / 255.f;
+					count = file.Read<byte>(0);
+					pid = file.Read<byte>(1, true);
+					for (int i = 0; i < count; ++i)
+					{
+#pragma warning(suppress: 6386) // No real buffer overrun
+						image.pixels[index++] = palette[pid];
+					}
 				}
+				break;
+			}
+			}
+
 			customImages.push_back(image);
+			file.Close();
 		}
 	}
 }
