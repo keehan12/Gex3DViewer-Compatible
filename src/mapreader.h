@@ -45,6 +45,7 @@ struct texture_t
 {
 	unsigned int w, h;
 	glm::vec4* pixels;
+	bool deletePixels = true;
 };
 
 struct level_t

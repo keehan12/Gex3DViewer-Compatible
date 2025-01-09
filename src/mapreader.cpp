@@ -3,6 +3,7 @@
 #include <bit>
 #include <glm/ext/scalar_constants.hpp> // glm::pi
 #include <unordered_map>
+#include <algorithm>
 
 struct file_t
 {
@@ -30,10 +31,16 @@ struct file_t
 		return data;
 	}
 
-	~file_t()
+	void Close()
 	{
 		delete[] data;
 		size = 0;
+		baseOffset = 0;
+	}
+
+	~file_t()
+	{
+		Close();
 	}
 	
 private:
@@ -76,6 +83,18 @@ void CreateCube(std::shared_ptr<Model> model)
 	model->polygons.push_back({ {0, 5, 4}, 0, 0, {{0, 0}, {1, 1}, {0, 1}} });
 }
 
+static std::vector<texture_t> customImages;
+
+namespace ECustomImageType
+{
+	enum
+	{
+		CUSTOM_IMAGE_BASE = 0x100000,
+		INFO_SPAWN = CUSTOM_IMAGE_BASE + 0,
+		INFO_PROXSIG
+	};
+}
+
 ImagePacker::ImageInformation_t* FindImageInfoById(ImagePacker::ImageInformationList& list, int id)
 {
 	if (auto it = std::find_if(list.begin(), list.end(), [id](const ImagePacker::ImageInformation_t& it)
@@ -87,6 +106,39 @@ ImagePacker::ImageInformation_t* FindImageInfoById(ImagePacker::ImageInformation
 	}
 
 	return nullptr;
+}
+
+void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std::string& name, int customId, int scale = 5)
+{
+	model->name = name;
+
+	model->vertices.push_back({ -100 * scale,  100 * scale, 0, -100 * scale,   100 * scale, 0, 0, 128, 128, 128, 255 });
+	model->vertices.push_back({  100 * scale,  100 * scale, 0,  100 * scale,   100 * scale, 0, 0, 128, 128, 128, 255 });
+	model->vertices.push_back({  100 * scale, -100 * scale, 0,  100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
+	model->vertices.push_back({ -100 * scale, -100 * scale, 0, -100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
+
+	model->polygons.push_back({ {0, 1, 2}, 0, 0, {{0, 0}, {1, 0}, {1, 1}} });
+	model->polygons.push_back({ {0, 2, 3}, 0, 0, {{0, 0}, {1, 1}, {0, 1}} });
+
+	if ((customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
+	{
+		if (auto info = FindImageInfoById(level.list, customId))
+		{
+			for (int i = 0; i < 2; ++i)
+			{
+				auto& poly = model->polygons[i];
+				for (int j = 0; j < 3; ++j)
+				{
+					poly.uvs[j].x *= info->width;
+					poly.uvs[j].y *= info->height;
+					poly.uvs[j].x += info->x;
+					poly.uvs[j].y += info->y;
+					poly.uvs[j].x /= (float)level.sheet.w;
+					poly.uvs[j].y /= (float)level.sheet.h;
+				}
+			}
+		}
+	}
 }
 
 bool ReadFile(const std::string& filepath, file_t& file)
@@ -313,7 +365,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 	u32 was = dfx.baseOffset;
 	dfx.baseOffset = levelData.dataOffset + levelData.skyboxAddress;
 
-	model->name = "Skybox";
+	model->name = "@Skybox";
 	model->instances.push_back({ {0, 0, 0}, {0, 0, 0} });
 
 	for (int i = 0; i < levelData.nSkybox; ++i)
@@ -368,10 +420,6 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 					poly.uvs[j].y /= (float)level.sheet.h;
 				}
 			}
-			else
-			{
-				printf("Oops, you need to put the CD in the CD\n");
-			}
 
 			model->polygons.push_back(poly);
 		}
@@ -396,6 +444,7 @@ void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_
 	geo.vertexColorAddress = dfx.Read<addr_t>(0x2C);
 	geo.materialAddress = dfx.Read<addr_t>(0x30);
 	level.models.push_back(std::make_shared<Model>(0xFFFF'FFFF));
+	(*level.models.rbegin())->name = "@Level";
 
 	ReadVertices(dfx, level, levelData, geo, level.models[0]);
 	ReadPolygons(dfx, level, levelData, geo, level.models[0]);
@@ -417,6 +466,12 @@ void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	memcpy(name, dfx.data + levelData.dataOffset + modelNameAddr, 8);
 	printf("Reading %s model data...\n", name);
 	model->name = name;
+
+	if (model->name == "proxsig_")
+	{
+		CreateSpriteObject(level, model, "proxsig_", ECustomImageType::INFO_PROXSIG, 2);
+		return;
+	}
 
 	u16 objCount = dfx.Read<u16>(8);
 	addr_t objStartAddr = dfx.Read<u32>(12);
@@ -748,6 +803,59 @@ void LoadTextures(const std::string& filepath, level_t& level)
 		//delete[] t;
 		level.textures.push_back(texture_t{ w, h, t });
 	}
+	
+	for(int i = 0; i < customImages.size(); ++i)
+	{
+		if (auto info = FindImageInfoById(level.list, ECustomImageType::CUSTOM_IMAGE_BASE + i))
+		{
+			BlitTex(level.sheet, customImages[i], info->x, info->y);
+		}
+		level.textures.push_back(customImages[i]);
+	}
+}
+
+void LoadCustomImages()
+{
+	if (!customImages.empty())
+		return;
+
+	file_t file;
+	std::string rootType = "..";
+	if (!ReadFile("../data/images/spawn.png", file))
+	{
+		rootType = ".";
+		if (!ReadFile("./data/images/spawn.png", file))
+			return; // Failed to open both files
+	}
+
+	file.Close();
+
+	const std::vector<std::string> filesToLoad = {
+		"/data/images/spawn.bin",
+		"/data/images/proxsig.bin",
+	};
+
+	for (auto& fileName : filesToLoad)
+	{
+		if (ReadFile(rootType + fileName, file))
+		{
+			texture_t image;
+			image.w = file.Read<u32>(0);
+			image.h = file.Read<u32>(4);
+			image.pixels = new glm::vec4[image.w * image.h];
+			image.deletePixels = false;
+			for (int y = 0; y < image.h; ++y)
+				for (int x = 0; x < image.w; ++x)
+				{
+					size_t index = y * image.w + x;
+					image.pixels[index].r = file.Read<byte>(8 + 4 * index) / 255.f;
+					image.pixels[index].g = file.Read<byte>(8 + 4 * index + 1) / 255.f;
+					image.pixels[index].b = file.Read<byte>(8 + 4 * index + 2) / 255.f;
+					image.pixels[index].a = file.Read<byte>(8 + 4 * index + 3) / 255.f;
+				}
+			customImages.push_back(image);
+		}
+	}
 }
 
 bool GetTextureInformation(const std::string& filepath, ImagePacker::ImageInformationList& list)
@@ -766,6 +874,9 @@ bool GetTextureInformation(const std::string& filepath, ImagePacker::ImageInform
 			auto [w, h] = GetImageSizeFromTexture(lod, asp);
 			list.push_back({ (int)w, (int)h, (void*)i });
 		}
+		LoadCustomImages();
+		for(int i = 0; i < customImages.size(); ++i)
+			list.push_back({ (int)customImages[i].w, (int)customImages[i].h, (void*)(ECustomImageType::CUSTOM_IMAGE_BASE + i)});
 		return true;
 	}
 	return false;
@@ -920,8 +1031,17 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	ReadLevelGeometry(dfx, level, levelData, dfx.Read<addr_t>(0));
 
 	std::shared_ptr<Model> cube = std::make_shared<Model>(0);
+	cube->name = "@Misc";
 	CreateCube(cube);
 	level.models.push_back(cube);
+
+	// Create spawn point
+	dfx.baseOffset = levelData.dataOffset;
+	std::shared_ptr<Model> spawn = std::make_shared<Model>(levelData.dataOffset + 0x28);
+	CreateSpriteObject(level, spawn, "$Spawn", ECustomImageType::INFO_SPAWN);
+	level.models.push_back(spawn);
+	spawn->instances.push_back({});
+	spawn->instances[0].position = { dfx.Read<i16>(0x28) * -0.001f, dfx.Read<i16>(0x2C) * -0.001f, dfx.Read<i16>(0x2A) * 0.001f };
 
 	for (u32 i = 0; i < levelData.nObjects; ++i)
 	{
@@ -936,6 +1056,11 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	s.resize(8);
 	memcpy(s.data(), dfx.data + levelData.dataOffset + 0xE0, 8);
 	level.name = GetLevelName(s, dfx.Read<u32>(0));
+
+	std::sort(level.models.begin() + 3, level.models.end(), [](std::shared_ptr<Model> a, std::shared_ptr<Model> b)
+		{
+			return a->name < b->name;
+		});
 
 	return true;
 }

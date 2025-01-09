@@ -190,12 +190,20 @@ glm::mat4 camera(const glm::mat4& model)
 
 bool IsBillboardObject(const std::string& name)
 {
+    if (name.empty())
+        return false;
+
+    if (name[0] == '$')
+        return true;
+
     const char* BillboardObjectNames[] = {
         "nflame__",
         "mflame__",
 
         "charger_",
         "steam___",
+
+        "proxsig_",
 
         /// COLLECTIBLES
         // Aztec 2 Step
@@ -310,7 +318,8 @@ void CloseLevel(sleveldata_t& leveldata)
         glDeleteTextures(1, &leveldata.texid);
     leveldata.texid = 0;
     for (auto& tex : leveldata.level.textures)
-        delete[] tex.pixels;
+        if (tex.deletePixels)
+            delete[] tex.pixels;
     leveldata.level.textures.clear();
     leveldata.level.models.clear();
     leveldata.open = false;
@@ -669,12 +678,19 @@ int main()
                 }
                 for (auto& mdl : leveldata.level.models)
                 {
-                    if (mdl->addr == 0xFFFF'FFFF)
-                        ImGui::Text("Level");
-                    else if (mdl->addr == 0x0000'0000)
-                        ImGui::Text("Misc.");
-                    else
+                    {
+                        bool colorSet = !mdl->name.empty() && mdl->name[0] == '$' || mdl->name[0] == '@';
+                        if (colorSet)
+                        {
+                            if (mdl->name[0] == '$')
+                                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(237, 190, 19, 255));
+                            else
+                                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(212, 46, 34, 255));
+                        }
                         ImGui::Text(mdl->name.c_str());
+                        if (colorSet)
+                            ImGui::PopStyleColor();
+                    }
 
                     ImGui::BeginGroup();
                     ImGui::Indent(8.f);
