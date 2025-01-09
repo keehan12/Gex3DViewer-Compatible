@@ -1043,6 +1043,8 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	spawn->instances.push_back({});
 	spawn->instances[0].position = { dfx.Read<i16>(0x28) * -0.001f, dfx.Read<i16>(0x2C) * -0.001f, dfx.Read<i16>(0x2A) * 0.001f };
 
+	size_t currModelIndex = level.models.size();
+
 	for (u32 i = 0; i < levelData.nObjects; ++i)
 	{
 		ReadObjectInstance(dfx, level, levelData, levelData.dataOffset + levelData.objAddress + 0x30 * i);
@@ -1057,7 +1059,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	memcpy(s.data(), dfx.data + levelData.dataOffset + 0xE0, 8);
 	level.name = GetLevelName(s, dfx.Read<u32>(0));
 
-	std::sort(level.models.begin() + 3, level.models.end(), [](std::shared_ptr<Model> a, std::shared_ptr<Model> b)
+	std::sort(level.models.begin() + currModelIndex, level.models.end(), [](std::shared_ptr<Model> a, std::shared_ptr<Model> b)
 		{
 			return a->name < b->name;
 		});
