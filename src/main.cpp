@@ -159,9 +159,6 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
         return;
 
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-
     if (key == GLFW_KEY_X && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
     {
         SetWireframe(!wireframe);
@@ -204,6 +201,7 @@ bool IsBillboardObject(const std::string& name)
         "steam___",
 
         "proxsig_",
+        "@Misc",
 
         /// COLLECTIBLES
         // Aztec 2 Step
@@ -676,8 +674,39 @@ int main()
                         }
                     }
                 }
+                static char filterTextBuffer[32] = "!!";
+                static std::string filterText = "!!";
+                auto tolower = [](std::string s)
+                    {
+                        for (auto& c : s)
+                            c = ::tolower(c);
+                        return s;
+                    };
+                ImGui::Text("Object Filter");
+                ImGui::SameLine();
+                if (ImGui::InputText("##Object Filter", filterTextBuffer, 16, ImGuiInputTextFlags_NoUndoRedo | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue))
+                {
+                    filterText = filterTextBuffer;
+                    filterText = tolower(filterText);
+                }
+
                 for (auto& mdl : leveldata.level.models)
                 {
+                    if (!filterText.empty() && filterText != "!")
+                    {
+                        if (filterText[0] == '!')
+                        {
+                            if (filterText[1] == '!')
+                            {
+                                if (std::string("@$").find(mdl->name[0]) != std::string::npos)
+                                    continue;
+                            }
+                            else if (tolower(mdl->name).find(&filterText[1]) != std::string::npos)
+                                continue;
+                        }
+                        else if (tolower(mdl->name).find(filterText) == std::string::npos)
+                            continue;
+                    }
                     {
                         bool colorSet = !mdl->name.empty() && mdl->name[0] == '$' || mdl->name[0] == '@';
                         if (colorSet)
@@ -715,6 +744,11 @@ int main()
                         for (auto& inst : mdl->instances)
                         {
                             ImGui::Text("Pos: (%.0f, %.0f, %.0f) Rot: (%.0f, %.0f, %.0f)", -inst.position.x * 1000.f, inst.position.y * 1000.f, inst.position.z * 1000.f, inst.rotation.x * 180 / glm::pi<float>(), inst.rotation.y * 180 / glm::pi<float>(), inst.rotation.z * 180 / glm::pi<float>());
+                            if (inst.address != 0)
+                            {
+                                ImGui::SameLine();
+                                ImGui::Text("Address: 0x%.6x", inst.address);
+                            }
                             ImGui::Checkbox(("Visible?##" + std::to_string(mdl->addr) + "_" + std::to_string(__i++)).c_str(), &inst.isVisible);
                             ImGui::Separator();
                         }

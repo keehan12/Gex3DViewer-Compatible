@@ -12,6 +12,7 @@ struct objinstance_t
 	glm::vec3 position{ 0, 0, 0 };
 	glm::vec3 rotation{ 0, 0, 0 };
 	bool isVisible = true;
+	unsigned int address = 0;
 };
 
 struct Model

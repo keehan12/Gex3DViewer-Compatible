@@ -92,7 +92,9 @@ namespace ECustomImageType
 	{
 		CUSTOM_IMAGE_BASE = 0x100000,
 		INFO_SPAWN = CUSTOM_IMAGE_BASE + 0,
-		INFO_PROXSIG
+		INFO_PROXSIG,
+		INFO_UNKNOWN,
+		INFO_POINT
 	};
 }
 
@@ -118,8 +120,8 @@ void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std:
 	model->vertices.push_back({  100 * scale, -100 * scale, 0,  100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
 	model->vertices.push_back({ -100 * scale, -100 * scale, 0, -100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
 
-	model->polygons.push_back({ {0, 1, 2}, 0, 0, {{0, 0}, {1, 0}, {1, 1}} });
-	model->polygons.push_back({ {0, 2, 3}, 0, 0, {{0, 0}, {1, 1}, {0, 1}} });
+	model->polygons.push_back({ {2, 1, 0}, 0, 0, {{1, 1}, {1, 0}, {0, 0}} });
+	model->polygons.push_back({ {3, 2, 0}, 0, 0, {{0, 1}, {1, 1}, {0, 0}} });
 
 	if ((customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
 	{
@@ -381,9 +383,9 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 		dfx.baseOffset = levelData.dataOffset + vertAddr;
 		for (u32 v = 0; v < nVerts; ++v)
 		{
-			int x = (short)(dfx.Read<i16>(0, true)) * 10;
-			int y = (short)(dfx.Read<i16>(0, true)) * 10;
-			int z = (short)(dfx.Read<i16>(0, true)) * 10;
+			int x = (short)(dfx.Read<i16>(0, true)) * 20;
+			int y = (short)(dfx.Read<i16>(0, true)) * 20;
+			int z = (short)(dfx.Read<i16>(0, true)) * 20;
 			u16 n = dfx.Read<u16>(0, true);
 			model->vertices.push_back(Model::vertex_t{ x, z, -y, x, z, -y, n, 128, 128, 128, 255 });
 		}
@@ -539,6 +541,93 @@ void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	}
 }
 
+std::shared_ptr<Model> CreatePathPointObject(level_t& level, addr_t addr)
+{
+	std::shared_ptr<Model> pathPoint = std::make_shared<Model>(addr);
+	CreateSpriteObject(level, pathPoint, "$PathPoint", ECustomImageType::INFO_POINT, 1);
+	level.models.push_back(pathPoint);
+	return pathPoint;
+}
+
+void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr_t platformAddr)
+{
+	struct PathPoint
+	{
+		unsigned short speed;
+		short x, y, z;
+	};
+
+	struct Path
+	{
+		addr_t address;
+		std::vector<PathPoint> points;
+	};
+
+	std::vector<addr_t> paths;
+	dfx.baseOffset = platformAddr + levelData.dataOffset;
+	while (true)
+	{
+		addr_t pathStart = dfx.Read<addr_t>(0, true);
+		if (pathStart == 0)
+			break;
+
+		paths.push_back(pathStart);
+		break;
+	}
+	
+	std::vector<Path> pathList;
+	for (const auto& p : paths)
+	{
+		dfx.baseOffset = p + levelData.dataOffset;
+		addr_t pointsAddr = dfx.Read<addr_t>(0);
+		u16 nPoints = dfx.Read<u16>(4);
+		pathList.push_back({dfx.baseOffset});
+		dfx.baseOffset = pointsAddr + levelData.dataOffset;
+		for (u16 i = 0; i < nPoints; ++i)
+		{
+			pathList.rbegin()->points.push_back({
+				dfx.Read<u16>(i * 0x20 + 0),
+				dfx.Read<i16>(i * 0x20 + 2),
+				dfx.Read<i16>(i * 0x20 + 4),
+				dfx.Read<i16>(i * 0x20 + 6)
+			});
+		}
+	}
+
+	auto Hexify = [](addr_t n) -> std::string
+		{
+			if (n == 0)
+				return "0";
+			std::string s;
+			while (n > 0)
+			{
+				if (n % 0x10 > 9)
+				{
+					s += 'a' + ((n % 0x10) - 10);
+				}
+				else
+				{
+					s += '0' + (n % 0x10);
+				}
+				n >>= 4;
+			}
+			std::reverse(s.begin(), s.end());
+			return s;
+		};
+
+	for (auto& p : pathList)
+	{
+		auto mdl = CreatePathPointObject(level, p.address);
+		mdl->name += "-" + Hexify(p.address);
+		for (auto& pn : p.points)
+		{
+			mdl->instances.push_back({
+				{ -pn.x * 0.001f, -pn.z * 0.001f, pn.y * 0.001f}, {0, 0, 0}
+			});
+		}
+	}
+}
+
 void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr_t instanceAddr)
 {
 	dfx.baseOffset = 0;
@@ -558,8 +647,70 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
 	glm::vec3 rot = { dfx.Read<i16>(10) * c_PI_2_FROM_1024, dfx.Read<i16>(12) * -c_PI_2_FROM_1024, dfx.Read<i16>(14) * c_PI_2_FROM_1024 };
 	glm::vec3 pos = { -dfx.Read<i16>(16) * 0.001f, -dfx.Read<i16>(20) * 0.001f, dfx.Read<i16>(18) * 0.001f };
-	level.models[modelIndex]->instances.push_back({ pos, rot });
+	level.models[modelIndex]->instances.push_back({ pos, rot, true, instanceAddr });
 
+	// Custom parsing for some stuff
+	std::vector<const char*> listOfPlatformTypes = {
+		"mplat___",
+		"flttblb_",
+		"flttbl__",
+		"finplat_",
+		"tbplat__",
+		"cart____",
+
+		"fltdesk_",
+		"fltchst_",
+
+		"tube____",
+		"tubegls_",
+
+		"kplat___",
+		"kplatb__",
+		"kplatc__",
+		"kplatd__",
+
+		"kswing__",
+		"kngdmnd_",
+		"const___",
+
+		"jimbloc_",
+		"jplat___",
+		"frocket_",
+		"jimboat_",
+		"logturn_",
+		"jimplts_",
+
+		"flyplat_",
+		"jimplat_",
+
+		"qsauc___",
+		"rocket__",
+		"astplta_",
+		"darkshp_",
+
+		"darksop_",
+		"splat___",
+		"astpltb_",
+		"poop____", // why, these are just space platforms
+		"poopqq__",
+		"poopz___",
+		"qplat___",
+		"qsmall__",
+
+		"qelev___",
+		"qpad____",
+		"qdoor___",
+		"qbars___",
+		"qsdoor__",
+		"qssdoor_",
+		"discoff_"
+	};
+	for(auto& n : listOfPlatformTypes)
+		if (level.models[modelIndex]->name == n)
+		{
+			ReadMovingPlatform(dfx, level, levelData, dfx.Read<addr_t>(0x28));
+			break;
+		}
 }
 
 struct GexTex_t
@@ -834,6 +985,8 @@ void LoadCustomImages()
 	const std::vector<std::string> filesToLoad = {
 		"/data/images/spawn.bin",
 		"/data/images/proxsig.bin",
+		"/data/images/unknown.bin",
+		"/data/images/point.bin"
 	};
 
 	for (auto& fileName : filesToLoad)
@@ -1073,10 +1226,9 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 
 	ReadLevelGeometry(dfx, level, levelData, dfx.Read<addr_t>(0));
 
-	std::shared_ptr<Model> cube = std::make_shared<Model>(0);
-	cube->name = "@Misc";
-	CreateCube(cube);
-	level.models.push_back(cube);
+	std::shared_ptr<Model> misc = std::make_shared<Model>(0);
+	CreateSpriteObject(level, misc, "@Misc", ECustomImageType::INFO_UNKNOWN, 1);
+	level.models.push_back(misc);
 
 	// Create spawn point
 	dfx.baseOffset = levelData.dataOffset;
@@ -1085,6 +1237,10 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	level.models.push_back(spawn);
 	spawn->instances.push_back({});
 	spawn->instances[0].position = { dfx.Read<i16>(0x28) * -0.001f, dfx.Read<i16>(0x2C) * -0.001f, dfx.Read<i16>(0x2A) * 0.001f };
+
+	//std::shared_ptr<Model> pathPoint = std::make_shared<Model>(4);
+	//CreateSpriteObject(level, pathPoint, "$PathPoint", ECustomImageType::INFO_POINT, 1);
+	//level.models.push_back(pathPoint);
 
 	size_t currModelIndex = level.models.size();
 
