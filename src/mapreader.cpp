@@ -385,7 +385,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 			int y = (short)(dfx.Read<i16>(0, true)) * 10;
 			int z = (short)(dfx.Read<i16>(0, true)) * 10;
 			u16 n = dfx.Read<u16>(0, true);
-			model->vertices.push_back(Model::vertex_t{ x, z, y, x, z, y, n, 128, 128, 128, 255 });
+			model->vertices.push_back(Model::vertex_t{ x, z, -y, x, z, -y, n, 128, 128, 128, 255 });
 		}
 
 		dfx.baseOffset = levelData.dataOffset + polyAddr;
