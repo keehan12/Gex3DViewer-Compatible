@@ -547,6 +547,11 @@ int main()
                 toggleObjectsMenu = true;
             }
 
+            if (ImGui_CenteredButton("View Texture Atlas"))
+            {
+                showTexturePanel = true;
+            }
+
             if (ImGui_CenteredButton("Reset Camera"))
             {
                 g_CamPos = { 0, 0, 0 };
@@ -555,12 +560,6 @@ int main()
 
             ImGui::Spacing();
             ImGuiStyle& style = ImGui::GetStyle();
-            float ratio = (ImGui::GetContentRegionAvail().x - style.FramePadding.x * 2.f) / leveldata.level.sheet.w;
-            auto [cx, cy] = ImGui::GetCursorPos();
-            //if (ImGui::ImageButton((ImTextureID)leveldata.texid, { ratio * leveldata.level.sheet.w, (float)leveldata.level.sheet.h * ratio }))
-            //{
-            //    showTexturePanel = true;
-            //}
 
             ImGui::ColorPicker3("Skybox\nColor", &bgColor.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoOptions);
 
@@ -750,6 +749,11 @@ int main()
                                 ImGui::Text("Address: 0x%.6x", inst.address);
                             }
                             ImGui::Checkbox(("Visible?##" + std::to_string(mdl->addr) + "_" + std::to_string(__i++)).c_str(), &inst.isVisible);
+                            ImGui::SameLine();
+                            if (ImGui::Button(("Teleport To...##" + std::to_string(mdl->addr) + "_" + std::to_string(__i++)).c_str()))
+                            {
+                                g_CamPos = -inst.position;
+                            }
                             ImGui::Separator();
                         }
                         ImGui::Unindent(8.f);
