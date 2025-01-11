@@ -654,8 +654,8 @@ int main()
                                 {
                                     auto& inst = mdl->instances[j];
                                     sprintf(buffer, "\t\t{ \"pos\": [%d, %d, %d], \"rot\": [%.6f, %.6f, %.6f] }",
-                                        (int)(inst.position.x * 1000),
-                                        (int)(inst.position.y * 1000),
+                                        (int)(inst.position.x * -1000),
+                                        (int)(inst.position.y * -1000),
                                         (int)(inst.position.z * 1000),
                                         (inst.rotation.x),
                                         (inst.rotation.y),
@@ -743,7 +743,7 @@ int main()
                         int __i = 0;
                         for (auto& inst : mdl->instances)
                         {
-                            ImGui::Text("Pos: (%.0f, %.0f, %.0f) Rot: (%.0f, %.0f, %.0f)", -inst.position.x * 1000.f, inst.position.y * 1000.f, inst.position.z * 1000.f, inst.rotation.x * 180 / glm::pi<float>(), inst.rotation.y * 180 / glm::pi<float>(), inst.rotation.z * 180 / glm::pi<float>());
+                            ImGui::Text("Pos: (%.0f, %.0f, %.0f) Rot: (%.0f, %.0f, %.0f)", -inst.position.x * 1000.f, -inst.position.y * 1000.f, inst.position.z * 1000.f, inst.rotation.x * 180 / glm::pi<float>(), inst.rotation.y * 180 / glm::pi<float>(), inst.rotation.z * 180 / glm::pi<float>());
                             if (inst.address != 0)
                             {
                                 ImGui::SameLine();
