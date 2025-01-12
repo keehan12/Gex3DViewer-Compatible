@@ -398,6 +398,25 @@ bool OpenLevel(const char* levelPath, sleveldata_t& leveldata)
     return true;
 }
 
+bool str_ends_with_nocase(std::string src, std::string trg)
+{
+    if (src.length() <= trg.length())
+        return false;
+
+    for (auto& c : trg)
+        c = tolower(c);
+
+    src = src.substr(src.length() - trg.length());
+    for (auto& c : src)
+        c = tolower(c);
+
+    for (size_t i = 0; i < src.length(); ++i)
+        if (src[i] != trg[i])
+            return false;
+
+    return true;
+}
+
 int main()
 {
     glfwInit();
@@ -563,6 +582,87 @@ int main()
 
             ImGui::ColorPicker3("Skybox\nColor", &bgColor.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoOptions);
 
+            if (ImGui_CenteredButton("Export Level Geometry..."))
+            {
+                if (leveldata.open)
+                {
+                    auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0");
+                    if (!path.empty())
+                    {
+                        if (!str_ends_with_nocase(path, ".ply"))
+                            path += ".ply";
+                        FILE* f = fopen(path.c_str(), "w");
+                        if (f)
+                        {
+                            auto writeln = [f](const std::string& s)
+                                {
+                                    fwrite(s.data(), s.length(), 1, f);
+                                };
+
+                            struct PLYVertex
+                            {
+                                float x, y, z;
+                                unsigned char r, g, b;
+                                float u, v;
+                            };
+
+                            std::vector<PLYVertex> vertices;
+
+                            std::shared_ptr<Model> models[] = { leveldata.level.models[0], leveldata.level.models[1] };
+
+                            for (auto mdl : models)
+                            {
+                                const auto& v = mdl->vertices;
+                                for (auto& p : mdl->polygons)
+                                {
+                                    if (mdl->addr == 0xFFFF'FFFF && (p.materialID == 0xFFFF'FFFF || p.flags & 0x80))
+                                        continue;
+
+                                    for (int i = 0; i < 3; ++i)
+                                    {
+                                        const auto& vert = v[p.vertex[i]];
+
+                                        vertices.push_back({ vert.x / -1000.f, vert.z / 1000.f, vert.y / 1000.f, vert.r, vert.g, vert.b, p.uvs[i][0],  1.f - p.uvs[i][1] });
+                                    }
+                                }
+                            }
+
+                            writeln("ply\n");
+                            writeln("format ascii 1.0\n");
+                            writeln("comment Created from the Gex 3D Level Viewer\n");
+                            writeln("element vertex " + std::to_string(vertices.size()));
+                            writeln("\nproperty float x\n");
+                            writeln("property float y\n");
+                            writeln("property float z\n");
+                            writeln("property uchar red\n");
+                            writeln("property uchar green\n");
+                            writeln("property uchar blue\n");
+                            writeln("property float s\n");
+                            writeln("property float t\n");
+                            writeln("element face " + std::to_string(vertices.size() / 3));
+                            writeln("\nproperty list uchar uint vertex_indices\n");
+                            writeln("end_header\n");
+                            char buffer[1024] = { 0 };
+
+                            for (auto& v : vertices)
+                            {
+                                sprintf(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
+                                writeln(buffer);
+                            }
+
+                            for (unsigned int i = 0; i < vertices.size() / 3; ++i)
+                            {
+                                sprintf(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
+                                writeln(buffer);
+                            }
+
+                            fclose(f);
+                        }
+
+                    }
+                }
+            }
+
             const char* msg = "Shoutout to the /r/Gex Discord";
             float sizey = ImGui::CalcTextSize(msg).y + style.FramePadding.y * 2.0f;
             float availy = ImGui::GetContentRegionAvail().y;
@@ -588,6 +688,47 @@ int main()
             if (ImGui::Begin("Texture Atlas", &showTexturePanel, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar))
             {
                 ImGui::Text("Atlas Size: %lux%lu", leveldata.level.sheet.w, leveldata.level.sheet.h);
+                ImGui::SameLine();
+                if (ImGui::Button("Export Texture Atlas..."))
+                {
+                    auto path = OpenSavePrompt("TARGA File (*.TGA)\0*.TGA\0All files (*.*)\0*.*\0");
+                    if (!path.empty())
+                    {
+                        if (!str_ends_with_nocase(path, ".tga"))
+                            path += ".tga";
+
+                        FILE* f = fopen(path.c_str(), "wb");
+                        if (f)
+                        {
+                            unsigned char tga[18];
+                            memset(tga, 0, 18);
+                            tga[2] = 2;
+                            tga[12] = leveldata.level.sheet.w & 0xFF;
+                            tga[13] = (leveldata.level.sheet.w >> 8) & 0xFF;
+                            tga[14] = leveldata.level.sheet.h & 0xFF;
+                            tga[15] = (leveldata.level.sheet.h >> 8) & 0xFF;
+                            tga[16] = 32;
+                            tga[17] = 32;
+
+                            fwrite(&tga, sizeof(tga), 1, f);
+                            struct _pixel { byte a, r, g, b; } pixel;
+                            for (int y = 0; y < leveldata.level.sheet.h; ++y)
+                                for (int x = 0; x < leveldata.level.sheet.w; ++x)
+                                {
+                                    pixel = {
+                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][2] * 255),
+                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][1] * 255),
+                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][0] * 255),
+                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][3] * 255),
+                                    };
+                                    fwrite(&pixel, sizeof(_pixel), 1, f);
+                                }
+
+                            fclose(f);
+                        }
+
+                    }
+                }
                 ImGui::SliderFloat("Texture Zoom", &textureZoomScale, 1.f, 8.f, "%.0f");
                 ImGuiStyle& style = ImGui::GetStyle();
                 float ratio = 1.f;
@@ -735,6 +876,83 @@ int main()
                     {
                         for (auto& inst : mdl->instances)
                             inst.isVisible = false;
+                    }
+
+                    if (ImGui::Button(("Export Model...##" + std::to_string(mdl->addr)).c_str()))
+                    {
+                        if (leveldata.open)
+                        {
+                            auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0");
+                            if (!path.empty())
+                            {
+                                if (!str_ends_with_nocase(path, ".ply"))
+                                    path += ".ply";
+
+                                FILE* f = fopen(path.c_str(), "w");
+                                if (f)
+                                {
+                                    auto writeln = [f](const std::string& s)
+                                        {
+                                            fwrite(s.data(), s.length(), 1, f);
+                                        };
+
+                                    struct PLYVertex
+                                    {
+                                        float x, y, z;
+                                        unsigned char r, g, b;
+                                        float u, v;
+                                    };
+
+                                    std::vector<PLYVertex> vertices;
+
+                                    const auto& v = mdl->vertices;
+                                    for (auto& p : mdl->polygons)
+                                    {
+                                        if (mdl->addr == 0xFFFF'FFFF && (p.materialID == 0xFFFF'FFFF || p.flags & 0x80))
+                                            continue;
+
+                                        for (int i = 0; i < 3; ++i)
+                                        {
+                                            const auto& vert = v[p.vertex[i]];
+
+                                            vertices.push_back({ vert.x / -1000.f, vert.z / 1000.f, vert.y / 1000.f, vert.r, vert.g, vert.b, p.uvs[i][0],  1.f - p.uvs[i][1] });
+                                        }
+                                    }
+
+                                    writeln("ply\n");
+                                    writeln("format ascii 1.0\n");
+                                    writeln("comment Created from the Gex 3D Level Viewer\n");
+                                    writeln("element vertex " + std::to_string(vertices.size()));
+                                    writeln("\nproperty float x\n");
+                                    writeln("property float y\n");
+                                    writeln("property float z\n");
+                                    writeln("property uchar red\n");
+                                    writeln("property uchar green\n");
+                                    writeln("property uchar blue\n");
+                                    writeln("property float s\n");
+                                    writeln("property float t\n");
+                                    writeln("element face " + std::to_string(vertices.size() / 3));
+                                    writeln("\nproperty list uchar uint vertex_indices\n");
+                                    writeln("end_header\n");
+                                    char buffer[1024] = { 0 };
+
+                                    for (auto& v : vertices)
+                                    {
+                                        sprintf(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
+                                        writeln(buffer);
+                                    }
+
+                                    for (unsigned int i = 0; i < vertices.size() / 3; ++i)
+                                    {
+                                        sprintf(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
+                                        writeln(buffer);
+                                    }
+
+                                    fclose(f);
+                                }
+
+                            }
+                        }
                     }
                     if (mdl->showInstances)
                     {

@@ -269,6 +269,9 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 			}
 			else
 			{
+				polygon.uvs[0].x = polygon.uvs[0].y = 0;
+				polygon.uvs[1].x = polygon.uvs[1].y = 0;
+				polygon.uvs[2].x = polygon.uvs[2].y = 0;
 				polygon.materialID = 0xFFFFFFFF;
 			}
 
