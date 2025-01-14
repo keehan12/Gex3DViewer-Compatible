@@ -42,7 +42,7 @@ std::string OpenLoadPrompt(const char* filter)
         return buffer;
     return "";
 }
-std::string OpenSavePrompt(const char* filter)
+std::string OpenSavePrompt(const char* filter, const std::string& def = "")
 {
     OPENFILENAMEA ofn{ sizeof(OPENFILENAMEA) };
     ofn.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT;
@@ -50,7 +50,8 @@ std::string OpenSavePrompt(const char* filter)
     ofn.lpstrFilter = filter;
     ofn.nFilterIndex = 1;
     ofn.lpstrTitle = "Save File...";
-    char buffer[MAX_PATH + 1]{ 0 };
+    char buffer[MAX_PATH + 1] = { 0 };
+    memcpy(buffer, def.data(), def.length());
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = MAX_PATH;
     if (GetSaveFileNameA(&ofn) == TRUE)
@@ -200,8 +201,10 @@ bool IsBillboardObject(const std::string& name)
         "charger_",
         "steam___",
 
+        "cold____",
+
         "proxsig_",
-        "@Misc",
+        "@Path",
 
         /// COLLECTIBLES
         // Aztec 2 Step
@@ -270,6 +273,7 @@ bool IsBillboardObject(const std::string& name)
 struct globj_t
 {
     GLuint vbo = 0;
+    bool hasNoTexture = false;
     std::vector<Vertex> vertices;
     void draw(GLuint program, sleveldata_t& leveldata, objinstance_t& inst, const std::string& name)
     {
@@ -295,7 +299,7 @@ struct globj_t
         }
         glm::mat4 cam = camera(Model);
         glUniformMatrix4fv(glGetUniformLocation(program, "uCamera"), 1, false, glm::value_ptr(cam));
-        glUniform1i(glGetUniformLocation(program, "uWireframe"), (wireframe << 0) | (vertexCols << 1) | (texturesVis << 2));
+        glUniform1i(glGetUniformLocation(program, "uWireframe"), (wireframe << 0) | (vertexCols << 1) | ((texturesVis && !hasNoTexture) << 2));
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, leveldata.texid);
         glUniform1i(glGetUniformLocation(program, "uTexture"), 0);
@@ -320,6 +324,7 @@ void CloseLevel(sleveldata_t& leveldata)
             delete[] tex.pixels;
     leveldata.level.textures.clear();
     leveldata.level.models.clear();
+    leveldata.level.paths.clear();
     leveldata.open = false;
     mdls.clear();
 }
@@ -335,9 +340,19 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
             auto& v = model->vertices[p.vertex[i]];
             ptr->vertices.push_back({ {v.x / 1000.f, v.y / 1000.f, v.z / 1000.f}, {v.r / 255.f, v.g / 255.f, v.b / 255.f, v.a / 255.f}, p.uvs[i] });
             if (p.materialID == 0xFFFF'FFFF)
-                ptr->vertices.rbegin()->color.a = 0.f;
+                if (model->hasNoTextures)
+                {
+                    auto& c = ptr->vertices.rbegin()->color;
+                    c.r /= 2;
+                    c.g /= 2;
+                    c.b /= 2;
+                }
+                else
+                    ptr->vertices.rbegin()->color.a = 0.f;
         }
     }
+
+    ptr->hasNoTexture = model->hasNoTextures;
 
     glGenBuffers(1, &ptr->vbo);
     glBindBuffer(GL_ARRAY_BUFFER, ptr->vbo);
@@ -416,6 +431,10 @@ bool str_ends_with_nocase(std::string src, std::string trg)
 
     return true;
 }
+
+void DumpObjects(FILE* f, sleveldata_t& leveldata);
+void ExportModel(FILE* f, std::shared_ptr<Model> mdl);
+void ExportTextureSheet(FILE* f, sleveldata_t& leveldata);
 
 int main()
 {
@@ -586,12 +605,13 @@ int main()
             {
                 if (leveldata.open)
                 {
-                    auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0");
+                    auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0", levelPath + ".ply");
                     if (!path.empty())
                     {
                         if (!str_ends_with_nocase(path, ".ply"))
                             path += ".ply";
-                        FILE* f = fopen(path.c_str(), "w");
+                        FILE* f = NULL;
+                        fopen_s(&f, path.c_str(), "w");
                         if (f)
                         {
                             auto writeln = [f](const std::string& s)
@@ -646,13 +666,13 @@ int main()
 
                             for (auto& v : vertices)
                             {
-                                sprintf(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
+                                sprintf_s(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
                                 writeln(buffer);
                             }
 
                             for (unsigned int i = 0; i < vertices.size() / 3; ++i)
                             {
-                                sprintf(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
+                                sprintf_s(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
                                 writeln(buffer);
                             }
 
@@ -691,41 +711,16 @@ int main()
                 ImGui::SameLine();
                 if (ImGui::Button("Export Texture Atlas..."))
                 {
-                    auto path = OpenSavePrompt("TARGA File (*.TGA)\0*.TGA\0All files (*.*)\0*.*\0");
+                    auto path = OpenSavePrompt("TARGA File (*.TGA)\0*.TGA\0All files (*.*)\0*.*\0", levelPath + ".tga");
                     if (!path.empty())
                     {
                         if (!str_ends_with_nocase(path, ".tga"))
                             path += ".tga";
 
-                        FILE* f = fopen(path.c_str(), "wb");
+                        FILE* f = NULL;
+                        fopen_s(&f, path.c_str(), "wb");
                         if (f)
-                        {
-                            unsigned char tga[18];
-                            memset(tga, 0, 18);
-                            tga[2] = 2;
-                            tga[12] = leveldata.level.sheet.w & 0xFF;
-                            tga[13] = (leveldata.level.sheet.w >> 8) & 0xFF;
-                            tga[14] = leveldata.level.sheet.h & 0xFF;
-                            tga[15] = (leveldata.level.sheet.h >> 8) & 0xFF;
-                            tga[16] = 32;
-                            tga[17] = 32;
-
-                            fwrite(&tga, sizeof(tga), 1, f);
-                            struct _pixel { byte a, r, g, b; } pixel;
-                            for (int y = 0; y < leveldata.level.sheet.h; ++y)
-                                for (int x = 0; x < leveldata.level.sheet.w; ++x)
-                                {
-                                    pixel = {
-                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][2] * 255),
-                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][1] * 255),
-                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][0] * 255),
-                                        (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][3] * 255),
-                                    };
-                                    fwrite(&pixel, sizeof(_pixel), 1, f);
-                                }
-
-                            fclose(f);
-                        }
+                            ExportTextureSheet(f, leveldata);
 
                     }
                 }
@@ -767,51 +762,15 @@ int main()
                 ImGui::SameLine();
                 if (ImGui::Button("Dump Object Info"))
                 {
-                    auto path = OpenSavePrompt("JSON File (*.json)\0*.json\0All files (*.*)\0*.*\0");
+                    auto path = OpenSavePrompt("JSON File (*.json)\0*.json\0All files (*.*)\0*.*\0", levelPath + ".json");
                     if (!path.empty())
                     {
-                        FILE* f = fopen(path.c_str(), "w");
+                        if (!str_ends_with_nocase(path, ".json"))
+                            path += ".json";
+                        FILE* f = NULL;
+                        fopen_s(&f, path.c_str(), "w");
                         if (f)
-                        {
-                            fwrite("{\n", 2, 1, f);
-                            char buffer[1024];
-                            for(int i = 0; i < leveldata.level.models.size(); ++i)
-                            {
-                                auto& mdl = leveldata.level.models[i];
-                                std::string objName = mdl->name.c_str();
-                                if (objName.empty())
-                                {
-                                    if (mdl->addr == 0)
-                                        objName = "Misc";
-                                    else if (mdl->addr == 0xFFFF'FFFF)
-                                        objName = "Level";
-                                    else
-                                        objName = "???";
-                                }
-                                sprintf(buffer, "\t\"%s\": [\n", objName.c_str());
-                                fwrite(buffer, strnlen(buffer, 1024), 1, f);
-                                for(int j = 0; j < mdl->instances.size(); ++j)
-                                {
-                                    auto& inst = mdl->instances[j];
-                                    sprintf(buffer, "\t\t{ \"pos\": [%d, %d, %d], \"rot\": [%.6f, %.6f, %.6f] }",
-                                        (int)(inst.position.x * -1000),
-                                        (int)(inst.position.y * -1000),
-                                        (int)(inst.position.z * 1000),
-                                        (inst.rotation.x),
-                                        (inst.rotation.y),
-                                        (inst.rotation.z)
-                                    );
-                                    fwrite(buffer, strnlen(buffer, 1024), 1, f);
-                                    if (j + 1 < mdl->instances.size())
-                                        fwrite(",\n", 2, 1, f);
-                                }
-                                fwrite("\n\t]", 3, 1, f);
-                                if (i + 1 < leveldata.level.models.size())
-                                    fwrite(",\n", 2, 1, f);
-                            }
-                            fwrite("\n}", 2, 1, f);
-                            fclose(f);
-                        }
+                            DumpObjects(f, leveldata);
                     }
                 }
                 static char filterTextBuffer[32] = "!!";
@@ -882,74 +841,16 @@ int main()
                     {
                         if (leveldata.open)
                         {
-                            auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0");
+                            auto path = OpenSavePrompt("Polygon File (*.ply)\0*.ply\0All files (*.*)\0*.*\0", levelPath + ".ply");
                             if (!path.empty())
                             {
                                 if (!str_ends_with_nocase(path, ".ply"))
                                     path += ".ply";
 
-                                FILE* f = fopen(path.c_str(), "w");
+                                FILE* f = NULL;
+                                fopen_s(&f, path.c_str(), "w");
                                 if (f)
-                                {
-                                    auto writeln = [f](const std::string& s)
-                                        {
-                                            fwrite(s.data(), s.length(), 1, f);
-                                        };
-
-                                    struct PLYVertex
-                                    {
-                                        float x, y, z;
-                                        unsigned char r, g, b;
-                                        float u, v;
-                                    };
-
-                                    std::vector<PLYVertex> vertices;
-
-                                    const auto& v = mdl->vertices;
-                                    for (auto& p : mdl->polygons)
-                                    {
-                                        if (mdl->addr == 0xFFFF'FFFF && (p.materialID == 0xFFFF'FFFF || p.flags & 0x80))
-                                            continue;
-
-                                        for (int i = 0; i < 3; ++i)
-                                        {
-                                            const auto& vert = v[p.vertex[i]];
-
-                                            vertices.push_back({ vert.x / -1000.f, vert.z / 1000.f, vert.y / 1000.f, vert.r, vert.g, vert.b, p.uvs[i][0],  1.f - p.uvs[i][1] });
-                                        }
-                                    }
-
-                                    writeln("ply\n");
-                                    writeln("format ascii 1.0\n");
-                                    writeln("comment Created from the Gex 3D Level Viewer\n");
-                                    writeln("element vertex " + std::to_string(vertices.size()));
-                                    writeln("\nproperty float x\n");
-                                    writeln("property float y\n");
-                                    writeln("property float z\n");
-                                    writeln("property uchar red\n");
-                                    writeln("property uchar green\n");
-                                    writeln("property uchar blue\n");
-                                    writeln("property float s\n");
-                                    writeln("property float t\n");
-                                    writeln("element face " + std::to_string(vertices.size() / 3));
-                                    writeln("\nproperty list uchar uint vertex_indices\n");
-                                    writeln("end_header\n");
-                                    char buffer[1024] = { 0 };
-
-                                    for (auto& v : vertices)
-                                    {
-                                        sprintf(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
-                                        writeln(buffer);
-                                    }
-
-                                    for (unsigned int i = 0; i < vertices.size() / 3; ++i)
-                                    {
-                                        sprintf(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
-                                        writeln(buffer);
-                                    }
-
-                                    fclose(f);
-                                }
+                                    ExportModel(f, mdl);
 
                             }
                         }
@@ -963,8 +864,19 @@ int main()
                             ImGui::Text("Pos: (%.0f, %.0f, %.0f) Rot: (%.0f, %.0f, %.0f)", -inst.position.x * 1000.f, -inst.position.y * 1000.f, inst.position.z * 1000.f, inst.rotation.x * 180 / glm::pi<float>(), inst.rotation.y * 180 / glm::pi<float>(), inst.rotation.z * 180 / glm::pi<float>());
                             if (inst.address != 0)
                             {
-                                ImGui::SameLine();
                                 ImGui::Text("Address: 0x%.6x", inst.address);
+                            }
+                            ImGui::Text("Instance Data:\n");
+                            for (int i = 0; i < 16; ++i)
+                            {
+                                ImGui::Text("%.2x", inst.instanceData[i / 4] >> (8 * (i % 4)) & 0xFF);
+                                if (i == 3 || i == 7 || i == 11)
+                                {
+                                    ImGui::SameLine();
+                                    ImGui::Text(" ");
+                                }
+                                if (i < 15)
+                                    ImGui::SameLine();
                             }
                             ImGui::Checkbox(("Visible?##" + std::to_string(mdl->addr) + "_" + std::to_string(__i++)).c_str(), &inst.isVisible);
                             ImGui::SameLine();
@@ -1005,4 +917,219 @@ int main()
     glfwTerminate();
 
     return 0;
+}
+
+void DumpObjects(FILE* f, sleveldata_t& leveldata)
+{
+    fwrite("{\n", 2, 1, f);
+    char buffer[1024];
+    sprintf_s(buffer, "\t\"raw_objects\": {\n");
+    fwrite(buffer, strnlen(buffer, 1024), 1, f);
+    for (size_t i = 0; i < leveldata.level.models.size(); ++i)
+    {
+        auto& mdl = leveldata.level.models[i];
+        std::string objName = mdl->name.c_str();
+        if (objName.empty())
+        {
+            if (mdl->addr == 0xFFFF'FFFF)
+                objName = "Level";
+            else
+                objName = "???";
+        }
+        sprintf_s(buffer, "\t\t\"%s\": [\n", objName.c_str());
+        fwrite(buffer, strnlen(buffer, 1024), 1, f);
+        for (size_t j = 0; j < mdl->instances.size(); ++j)
+        {
+            auto& inst = mdl->instances[j];
+            sprintf_s(buffer, "\t\t\t{ \"pos\": [%d, %d, %d], \"rot\": [%.6f, %.6f, %.6f] }",
+                (int)(inst.position.x * -1000),
+                (int)(inst.position.y * -1000),
+                (int)(inst.position.z * 1000),
+                (inst.rotation.x),
+                (inst.rotation.y),
+                (inst.rotation.z)
+            );
+            fwrite(buffer, strnlen(buffer, 1024), 1, f);
+            if ((j + 1) < mdl->instances.size())
+                fwrite(",\n", 2, 1, f);
+        }
+        fwrite("\n\t\t]", 4, 1, f);
+        if ((i + 1) < leveldata.level.models.size())
+            fwrite(",\n", 2, 1, f);
+    }
+    fwrite("\n\t},\n", 4, 1, f);
+    fwrite("\"paths\": [", 10, 1, f);
+    std::string pstr;
+    for (auto& path : leveldata.level.paths)
+    {
+        pstr += "\n\t\t{\n\t\t\t\"owner_instance\": " + std::to_string(path.owner);
+        pstr += ",\n\t\t\t\"points\": [";
+        for (auto& pt : path.points)
+        {
+            sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"pos\": [%d, %d, %d]},", pt.speed, pt.x, pt.z, pt.y);
+            pstr += buffer;
+        }
+        if (pstr.rbegin()[0] == ',')
+            pstr.pop_back();
+        pstr += "\n\t\t\t]\n\t\t},";
+    }
+    if (pstr.rbegin()[0] == ',')
+        pstr.pop_back();
+    fwrite(pstr.data(), pstr.length(), 1, f);
+    fwrite("\n\t],\n", 5, 1, f);
+    fwrite("\t\"pickups\": [", 13, 1, f);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        const char* const p = leveldata.level.pickupName[i];
+        if (strncmp(p, "gameboy_", 8) == 0 || strncmp(p, "remgold_", 8) == 0)
+            continue; // not real collectibles
+
+        std::string s = "\n\t\t{\n\t\t\t\"type\": \"" + std::string(p) + "\", \"instances\": [";
+        if (auto it = std::find_if(
+            leveldata.level.models.begin(),
+            leveldata.level.models.end(),
+            [p](std::shared_ptr<Model> m)
+            {
+                return m->name == p;
+            });
+            it != leveldata.level.models.end()
+                )
+        {
+            for (auto& inst : (*it)->instances)
+            {
+                sprintf_s(buffer, "\n\t\t\t\t[%d, %d, %d],",
+                    (int)(inst.position.x * -1000),
+                    (int)(inst.position.y * -1000),
+                    (int)(inst.position.z * 1000));
+                s += buffer;
+            }
+            if ((*it)->instances.size() > 0)
+                s.pop_back();
+        }
+        s += "\n\t\t\t]\n\t\t},";
+        fwrite(s.data(), s.length(), 1, f);
+    }
+
+    {
+        std::string s = "\n\t\t{\n\t\t\t\"type\": \"cold____\", \"instances\": [";
+        if (auto it = std::find_if(
+            leveldata.level.models.begin(),
+            leveldata.level.models.end(),
+            [](std::shared_ptr<Model> m)
+            {
+                return m->name == "cold____";
+            });
+            it != leveldata.level.models.end()
+                )
+        {
+            for (auto& inst : (*it)->instances)
+            {
+                sprintf_s(buffer, "\n\t\t\t\t[%d, %d, %d],",
+                    (int)(inst.position.x * -1000),
+                    (int)(inst.position.y * -1000),
+                    (int)(inst.position.z * 1000));
+                s += buffer;
+            }
+            if ((*it)->instances.size() > 0)
+                s.pop_back();
+        }
+        s += "\n\t\t\t]\n\t\t}";
+        fwrite(s.data(), s.length(), 1, f);
+    }
+
+    fwrite("\n\t]", 3, 1, f);
+    fwrite("\n}", 2, 1, f);
+    fclose(f);
+}
+
+void ExportModel(FILE* f, std::shared_ptr<Model> mdl)
+{
+    auto writeln = [f](const std::string& s)
+        {
+            fwrite(s.data(), s.length(), 1, f);
+        };
+
+    struct PLYVertex
+    {
+        float x, y, z;
+        unsigned char r, g, b;
+        float u, v;
+    };
+
+    std::vector<PLYVertex> vertices;
+
+    const auto& v = mdl->vertices;
+    for (auto& p : mdl->polygons)
+    {
+        if (mdl->addr == 0xFFFF'FFFF && (p.materialID == 0xFFFF'FFFF || p.flags & 0x80))
+            continue;
+
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto& vert = v[p.vertex[i]];
+
+            vertices.push_back({ vert.x / -1000.f, vert.z / 1000.f, vert.y / 1000.f, vert.r, vert.g, vert.b, p.uvs[i][0],  1.f - p.uvs[i][1] });
+        }
+    }
+
+    writeln("ply\n");
+    writeln("format ascii 1.0\n");
+    writeln("comment Created from the Gex 3D Level Viewer\n");
+    writeln("element vertex " + std::to_string(vertices.size()));
+    writeln("\nproperty float x\n");
+    writeln("property float y\n");
+    writeln("property float z\n");
+    writeln("property uchar red\n");
+    writeln("property uchar green\n");
+    writeln("property uchar blue\n");
+    writeln("property float s\n");
+    writeln("property float t\n");
+    writeln("element face " + std::to_string(vertices.size() / 3));
+    writeln("\nproperty list uchar uint vertex_indices\n");
+    writeln("end_header\n");
+    char buffer[1024] = { 0 };
+
+    for (auto& v : vertices)
+    {
+        sprintf_s(buffer, "%f %f %f %d %d %d %f %f\n", v.x, v.y, v.z, v.r, v.g, v.b, v.u, v.v);
+        writeln(buffer);
+    }
+
+    for (unsigned int i = 0; i < vertices.size() / 3; ++i)
+    {
+        sprintf_s(buffer, "3 %d %d %d\n", 3 * i, 3 * i + 1, 3 * i + 2);
+        writeln(buffer);
+    }
+
+    fclose(f);
+}
+
+void ExportTextureSheet(FILE* f, sleveldata_t& leveldata)
+{
+    unsigned char tga[18];
+    memset(tga, 0, 18);
+    tga[2] = 2;
+    tga[12] = leveldata.level.sheet.w & 0xFF;
+    tga[13] = (leveldata.level.sheet.w >> 8) & 0xFF;
+    tga[14] = leveldata.level.sheet.h & 0xFF;
+    tga[15] = (leveldata.level.sheet.h >> 8) & 0xFF;
+    tga[16] = 32;
+    tga[17] = 32;
+
+    fwrite(&tga, sizeof(tga), 1, f);
+    struct _pixel { byte a, r, g, b; } pixel;
+    for (unsigned int y = 0; y < leveldata.level.sheet.h; ++y)
+        for (unsigned int x = 0; x < leveldata.level.sheet.w; ++x)
+        {
+            pixel = {
+                (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][2] * 255),
+                (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][1] * 255),
+                (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][0] * 255),
+                (byte)(leveldata.level.sheet.pixels[y * leveldata.level.sheet.w + x][3] * 255),
+            };
+            fwrite(&pixel, sizeof(_pixel), 1, f);
+        }
+
+    fclose(f);
 }

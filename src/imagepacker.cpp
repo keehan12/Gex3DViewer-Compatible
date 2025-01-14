@@ -115,10 +115,10 @@ int ImagePacker::GeneratePackedList(ImageInformationList& list, int imageStartSi
 	int size = imageStartSizeHint;
 
 	// Very bare-bones selection sort, ordered on size
-	for (int i = 0; i < list.size(); ++i)
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		int bestidx = i;
-		for (int j = i; j < list.size(); ++j)
+		for (size_t j = i; j < list.size(); ++j)
 		{
 			if (list[j].height > list[bestidx].height)
 			{

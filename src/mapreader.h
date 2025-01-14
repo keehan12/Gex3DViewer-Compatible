@@ -13,6 +13,7 @@ struct objinstance_t
 	glm::vec3 rotation{ 0, 0, 0 };
 	bool isVisible = true;
 	unsigned int address = 0;
+	unsigned int instanceData[4] = { 0 };
 };
 
 struct Model
@@ -38,6 +39,7 @@ struct Model
 	std::vector<objinstance_t> instances;
 	bool objectVisibility = true;
 	bool showInstances = false;
+	bool hasNoTextures = false;
 
 	Model(unsigned int addr) : addr(addr) {}
 };
@@ -49,14 +51,29 @@ struct texture_t
 	bool deletePixels = true;
 };
 
+struct PathPoint
+{
+	unsigned short speed;
+	short x, y, z;
+};
+
+struct Path
+{
+	unsigned int address;
+	unsigned int owner;
+	std::vector<PathPoint> points;
+};
+
 struct level_t
 {
 	std::vector<std::shared_ptr<Model>> models;
 	std::vector<texture_t> textures;
+	std::vector<Path> paths;
 	ImagePacker::ImageInformationList list;
 	texture_t sheet{ 0, 0, NULL };
 	std::string name;
 	float bgColor[3];
+	char pickupName[3][9];
 };
 
 bool LoadLevel(const std::string& filepath, level_t& level);

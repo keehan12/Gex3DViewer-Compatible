@@ -1,6 +1,7 @@
 #include "mapreader.h"
 #include "glideconstants.h"
 #include <bit>
+#include <glm/glm.hpp>
 #include <glm/ext/scalar_constants.hpp> // glm::pi
 #include <unordered_map>
 #include <algorithm>
@@ -94,7 +95,8 @@ namespace ECustomImageType
 		INFO_SPAWN = CUSTOM_IMAGE_BASE + 0,
 		INFO_PROXSIG,
 		INFO_UNKNOWN,
-		INFO_POINT
+		INFO_POINT,
+		INFO_COLD
 	};
 }
 
@@ -123,7 +125,7 @@ void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std:
 	model->polygons.push_back({ {2, 1, 0}, 0, 0, {{1, 1}, {1, 0}, {0, 0}} });
 	model->polygons.push_back({ {3, 2, 0}, 0, 0, {{0, 1}, {1, 1}, {0, 0}} });
 
-	if ((customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
+	if ((size_t)(customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
 	{
 		if (auto info = FindImageInfoById(level.list, customId))
 		{
@@ -146,7 +148,9 @@ void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std:
 
 bool ReadFile(const std::string& filepath, file_t& file)
 {
-	if (FILE* f = fopen(filepath.c_str(), "rb"))
+	FILE* f = NULL;
+	fopen_s(&f, filepath.c_str(), "rb");
+	if (f)
 	{
 		fseek(f, 0, SEEK_END);
 		file.size = ftell(f);
@@ -222,6 +226,7 @@ void ReadVertices(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
 {
 	dfx.baseOffset = levelData.dataOffset + geo.polygonAddress;
+	bool hasTexturedFace = geo.isLevel;
 	for (u32 i = 0; i < geo.polygonCount; ++i)
 	{
 		Model::polygon_t polygon;
@@ -288,13 +293,13 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 		{
 			if ((polygon.flags & 0x02) == 0x02)
 			{
+				hasTexturedFace = true;
 				addr_t materialAddr = dfx.Read<addr_t>(stride * i + 8);
 				auto currOffset = dfx.baseOffset;
 				dfx.baseOffset = levelData.dataOffset + materialAddr;
 				polygon.materialID = ((polygon.flags & 8) == 0) ? dfx.Read<u16>(6) : geo.textureAnimAddress;
 				//if (materialAddr >= 0x1000)
 				//	printf("Material: (%X)|(%X) > %s\n", polygon.materialID / 0x1000, polygon.materialID % 0x1000, (polygon.flags & 8) ? "true" : "false");
-				addr_t was = 0;
 				if (model->name == "charger_" || model->name == "batt____" || model->name == "launch__")
 				{
 					printf("MAT: %d, FLG: %x\n", polygon.materialID, polygon.flags);
@@ -329,10 +334,7 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 					//dfx.baseOffset = was;
 				}
 				
-				if (was == 0)
-				{
-					polygon.materialID = dfx.Read<u16>(6) % 0x1000;
-				}
+				polygon.materialID = dfx.Read<u16>(6) % 0x1000;
 				polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
 				polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
 				polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
@@ -364,6 +366,7 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 		}
 		model->polygons.push_back(polygon);
 	}
+	model->hasNoTextures = !hasTexturedFace;
 }
 
 void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
@@ -374,7 +377,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 	model->name = "@Skybox";
 	model->instances.push_back({ {0, 0, 0}, {0, 0, 0} });
 
-	for (int i = 0; i < levelData.nSkybox; ++i)
+	for (u32 i = 0; i < levelData.nSkybox; ++i)
 	{
 		u32 vertexOffset = model->vertices.size();
 		u16 nPoly = dfx.Read<u16>(2, true);
@@ -477,6 +480,10 @@ void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	{
 		CreateSpriteObject(level, model, "proxsig_", ECustomImageType::INFO_PROXSIG, 2);
 		return;
+	} else if (model->name == "cold____")
+	{
+		CreateSpriteObject(level, model, "cold____", ECustomImageType::INFO_COLD, 1);
+		return;
 	}
 
 	u16 objCount = dfx.Read<u16>(8);
@@ -552,82 +559,145 @@ std::shared_ptr<Model> CreatePathPointObject(level_t& level, addr_t addr)
 	return pathPoint;
 }
 
-void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr_t platformAddr)
+void AddDiamondToModel(std::shared_ptr<Model> model, glm::vec3 pos, float scale = 1.f)
 {
-	struct PathPoint
-	{
-		unsigned short speed;
-		short x, y, z;
-	};
+	Model::vertex_t v;
+	v.r = v.a = 255;
+	v.g = v.b = 0;
 
-	struct Path
-	{
-		addr_t address;
-		std::vector<PathPoint> points;
-	};
-
-	std::vector<addr_t> paths;
-	dfx.baseOffset = platformAddr + levelData.dataOffset;
-	while (true)
-	{
-		addr_t pathStart = dfx.Read<addr_t>(0, true);
-		if (pathStart == 0)
-			break;
-
-		paths.push_back(pathStart);
-		break;
-	}
-	
-	std::vector<Path> pathList;
-	for (const auto& p : paths)
-	{
-		dfx.baseOffset = p + levelData.dataOffset;
-		addr_t pointsAddr = dfx.Read<addr_t>(0);
-		u16 nPoints = dfx.Read<u16>(4);
-		pathList.push_back({dfx.baseOffset});
-		dfx.baseOffset = pointsAddr + levelData.dataOffset;
-		for (u16 i = 0; i < nPoints; ++i)
+	auto addPoint = [&v, model](const glm::vec3& p)
 		{
-			pathList.rbegin()->points.push_back({
-				dfx.Read<u16>(i * 0x20 + 0),
-				dfx.Read<i16>(i * 0x20 + 2),
-				dfx.Read<i16>(i * 0x20 + 4),
-				dfx.Read<i16>(i * 0x20 + 6)
-			});
-		}
-	}
-
-	auto Hexify = [](addr_t n) -> std::string
-		{
-			if (n == 0)
-				return "0";
-			std::string s;
-			while (n > 0)
-			{
-				if (n % 0x10 > 9)
-				{
-					s += 'a' + ((n % 0x10) - 10);
-				}
-				else
-				{
-					s += '0' + (n % 0x10);
-				}
-				n >>= 4;
-			}
-			std::reverse(s.begin(), s.end());
-			return s;
+			v.x = v.oX = (int)p.x;
+			v.y = v.oY = (int)p.y;
+			v.z = v.oZ = (int)p.z;
+			model->vertices.push_back(v);
 		};
 
-	for (auto& p : pathList)
-	{
-		auto mdl = CreatePathPointObject(level, p.address);
-		mdl->name += "-" + Hexify(p.address);
-		for (auto& pn : p.points)
+	addPoint(pos + glm::vec3{  scale, 0, 0 });
+	addPoint(pos + glm::vec3{ -scale, 0, 0 });
+	addPoint(pos + glm::vec3{ 0,  scale, 0 });
+	addPoint(pos + glm::vec3{ 0, -scale, 0 });
+	addPoint(pos + glm::vec3{ 0, 0,  scale });
+	addPoint(pos + glm::vec3{ 0, 0, -scale });
+
+	model->polygons.push_back({
+		model->vertices.size() - 2,
+		model->vertices.size() - 6,
+		model->vertices.size() - 4,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 6,
+		model->vertices.size() - 1,
+		model->vertices.size() - 4,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 1,
+		model->vertices.size() - 5,
+		model->vertices.size() - 4,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 5,
+		model->vertices.size() - 2,
+		model->vertices.size() - 4,
+		});
+
+	// ---
+
+	model->polygons.push_back({
+		model->vertices.size() - 2,
+		model->vertices.size() - 3,
+		model->vertices.size() - 6,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 6,
+		model->vertices.size() - 3,
+		model->vertices.size() - 1,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 1,
+		model->vertices.size() - 3,
+		model->vertices.size() - 5,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 5,
+		model->vertices.size() - 3,
+		model->vertices.size() - 2,
+		});
+}
+
+void AddLineToModel(std::shared_ptr<Model> model, glm::vec3 start, glm::vec3 end)
+{
+	const glm::vec3 direction = glm::normalize(end - start);
+	if (direction.x == 0 && direction.y == 0 && direction.z == 0 || isnan(direction.x) || isnan(direction.y) || isnan(direction.z))
+		return; // 0-vector or invalid
+
+	glm::vec3 normal = glm::normalize(glm::cross(direction, { 0, 1, 0 }));
+	if (isnan(normal.x) || isnan(normal.y) || isnan(normal.z)) // happens when the direction vector points up or down?
+		normal = { 1, 0, 0 };
+
+	const glm::vec3 perp = glm::normalize(glm::cross(direction, normal));
+	Model::vertex_t v;
+	v.r = 0;
+	v.b = v.g = v.a = 255;
+
+	auto addPoint = [&v, model](const glm::vec3& p)
 		{
-			mdl->instances.push_back({
-				{ -pn.x * 0.001f, -pn.z * 0.001f, pn.y * 0.001f}, {0, 0, 0}
-			});
-		}
+			v.x = v.oX = (int)p.x;
+			v.y = v.oY = (int)p.y;
+			v.z = v.oZ = (int)p.z;
+			model->vertices.push_back(v);
+		};
+
+	addPoint(start + normal * 25.f);
+	addPoint(start - normal * 25.f + perp * 25.f);
+	addPoint(start - normal * 25.f - perp * 25.f);
+	addPoint(end);
+
+	model->polygons.push_back({
+		model->vertices.size() - 3,
+		model->vertices.size() - 1,
+		model->vertices.size() - 4,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 1,
+		model->vertices.size() - 2,
+		model->vertices.size() - 4,
+		});
+
+	model->polygons.push_back({
+		model->vertices.size() - 1,
+		model->vertices.size() - 3,
+		model->vertices.size() - 2,
+		});
+}
+
+void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr_t ownerAddr, addr_t platformAddr)
+{
+	dfx.baseOffset = platformAddr + levelData.dataOffset;
+	addr_t pathStart = dfx.Read<addr_t>(0, true);
+	if (pathStart == 0)
+		return;
+	
+	dfx.baseOffset = levelData.dataOffset + pathStart;
+	addr_t pointsAddr = dfx.Read<addr_t>(0);
+	u16 nPoints = dfx.Read<u16>(4);
+	level.paths.push_back({dfx.baseOffset, ownerAddr});
+	dfx.baseOffset = levelData.dataOffset + pointsAddr;
+	for (u16 i = 0; i < nPoints; ++i)
+	{
+		level.paths.rbegin()->points.push_back({
+			dfx.Read<u16>(i * 0x20 + 0),
+			dfx.Read<i16>(i * 0x20 + 2),
+			dfx.Read<i16>(i * 0x20 + 4),
+			dfx.Read<i16>(i * 0x20 + 6)
+		});
 	}
 }
 
@@ -650,7 +720,14 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
 	glm::vec3 rot = { dfx.Read<i16>(10) * c_PI_2_FROM_1024, dfx.Read<i16>(12) * -c_PI_2_FROM_1024, dfx.Read<i16>(14) * c_PI_2_FROM_1024 };
 	glm::vec3 pos = { -dfx.Read<i16>(16) * 0.001f, -dfx.Read<i16>(20) * 0.001f, dfx.Read<i16>(18) * 0.001f };
-	level.models[modelIndex]->instances.push_back({ pos, rot, true, instanceAddr });
+	level.models[modelIndex]->instances.push_back({ pos, rot, true, instanceAddr,
+		{
+			dfx.Read<u32>(0x20),
+			dfx.Read<u32>(0x24),
+			dfx.Read<u32>(0x28),
+			dfx.Read<u32>(0x2C),
+		}
+	});
 
 	// Custom parsing for some stuff
 	std::vector<const char*> listOfPlatformTypes = {
@@ -682,6 +759,7 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 		"jimboat_",
 		"logturn_",
 		"jimplts_",
+		"bldrgen_",
 
 		"flyplat_",
 		"jimplat_",
@@ -706,12 +784,53 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 		"qbars___",
 		"qsdoor__",
 		"qssdoor_",
-		"discoff_"
+		"discoff_",
+		"lvltv___",
+		"jaw_____",
+
+		"aztcflr_",
+		"aztcwl__",
+		"aztcbs__",
+		"aztcbks_",
+		"trndor__",
+		"gengen__",
+		"rockplt_",
+
+		"bee_____",
+		"rzstart_",
+		"rzbrain_",
+		"follow__",
+		"node____",
+		"pulse___",
+		"mspider_",
+		"rebggen_",
+		"rezsoul_",
+		"choppa__",
+		"tankb___",
+
+		"hrblock_",
+		"hrswtch_",
+		"reza____",
+		"skel____",
+		"hhelev__",
+
+		"draga___",
+		"kbgen___",
+		"moo_____",
+		"shark___",
+
+		"blastx__",
+		"blasty__",
+		"tvgen___",
+		"tvgurny_",
+		"mutant__",
+
+		"@Path",
 	};
 	for(auto& n : listOfPlatformTypes)
 		if (level.models[modelIndex]->name == n)
 		{
-			ReadMovingPlatform(dfx, level, levelData, dfx.Read<addr_t>(0x28));
+			ReadMovingPlatform(dfx, level, levelData, instanceAddr, dfx.Read<addr_t>(0x28));
 			break;
 		}
 }
@@ -959,7 +1078,7 @@ void LoadTextures(const std::string& filepath, level_t& level)
 		level.textures.push_back(texture_t{ w, h, t });
 	}
 	
-	for(int i = 0; i < customImages.size(); ++i)
+	for(size_t i = 0; i < customImages.size(); ++i)
 	{
 		if (auto info = FindImageInfoById(level.list, ECustomImageType::CUSTOM_IMAGE_BASE + i))
 		{
@@ -989,7 +1108,8 @@ void LoadCustomImages()
 		"/data/images/spawn.bin",
 		"/data/images/proxsig.bin",
 		"/data/images/unknown.bin",
-		"/data/images/point.bin"
+		"/data/images/point.bin",
+		"/data/images/cold.bin"
 	};
 
 	for (auto& fileName : filesToLoad)
@@ -1023,8 +1143,8 @@ void LoadCustomImages()
 			switch (compression)
 			{
 			case NONE:
-				for (int y = 0; y < image.h; ++y)
-					for (int x = 0; x < image.w; ++x)
+				for (u32 y = 0; y < image.h; ++y)
+					for (u32 x = 0; x < image.w; ++x)
 					{
 						size_t index = y * image.w + x;
 						image.pixels[index] = palette[file.Read<byte>(10 + 4 * nPalette + 1 + index)];
@@ -1074,7 +1194,7 @@ bool GetTextureInformation(const std::string& filepath, ImagePacker::ImageInform
 			list.push_back({ (int)w, (int)h, (void*)i });
 		}
 		LoadCustomImages();
-		for(int i = 0; i < customImages.size(); ++i)
+		for(size_t i = 0; i < customImages.size(); ++i)
 			list.push_back({ (int)customImages[i].w, (int)customImages[i].h, (void*)(ECustomImageType::CUSTOM_IMAGE_BASE + i)});
 		return true;
 	}
@@ -1177,6 +1297,67 @@ std::string GetLevelName(const std::string& levelStr, u32 dataOffsetRaw)
 	return "Unknown Level";
 }
 
+void ApplyPathModels(level_t& level)
+{
+
+	auto Hexify = [](addr_t n) -> std::string
+		{
+			if (n == 0)
+				return "0";
+			std::string s;
+			while (n > 0)
+			{
+				if (n % 0x10 > 9)
+				{
+					s += 'a' + ((n % 0x10) - 10);
+				}
+				else
+				{
+					s += '0' + (n % 0x10);
+				}
+				n >>= 4;
+			}
+			std::reverse(s.begin(), s.end());
+			return s;
+		};
+
+	for (auto& p : level.paths)
+	{
+		if (p.points.size() == 0)
+			continue;
+
+		auto mdl = std::make_shared<Model>(p.address);
+		mdl->name += "@Path-" + Hexify(p.address);
+		level.models.push_back(mdl);
+		mdl->instances.push_back({ {0, 0, 0}, {0, 0, 0} });
+		mdl->hasNoTextures = true;
+		for (size_t i = 0; (i + 1) < p.points.size(); ++i)
+		{
+			AddLineToModel(mdl, glm::vec3{
+					p.points[i].x,
+					p.points[i].z,
+					-p.points[i].y,
+				}, glm::vec3{
+					p.points[i + 1].x,
+					p.points[i + 1].z,
+					-p.points[i + 1].y,
+				});
+
+			AddDiamondToModel(mdl, glm::vec3{
+					p.points[i].x,
+					p.points[i].z,
+					-p.points[i].y,
+				}, 50.f);
+		}
+
+		AddDiamondToModel(mdl, glm::vec3{
+				p.points.rbegin()->x,
+				p.points.rbegin()->z,
+				-p.points.rbegin()->y,
+			}, 50.f);
+	}
+}
+
 bool LoadLevel(const std::string& filepath, level_t& level)
 {
 	file_t dfx;
@@ -1230,7 +1411,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	ReadLevelGeometry(dfx, level, levelData, dfx.Read<addr_t>(0));
 
 	std::shared_ptr<Model> misc = std::make_shared<Model>(0);
-	CreateSpriteObject(level, misc, "@Misc", ECustomImageType::INFO_UNKNOWN, 1);
+	CreateSpriteObject(level, misc, "@Path", ECustomImageType::INFO_UNKNOWN, 1);
 	level.models.push_back(misc);
 
 	// Create spawn point
@@ -1240,10 +1421,6 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	level.models.push_back(spawn);
 	spawn->instances.push_back({});
 	spawn->instances[0].position = { dfx.Read<i16>(0x28) * -0.001f, dfx.Read<i16>(0x2C) * -0.001f, dfx.Read<i16>(0x2A) * 0.001f };
-
-	//std::shared_ptr<Model> pathPoint = std::make_shared<Model>(4);
-	//CreateSpriteObject(level, pathPoint, "$PathPoint", ECustomImageType::INFO_POINT, 1);
-	//level.models.push_back(pathPoint);
 
 	size_t currModelIndex = level.models.size();
 
@@ -1261,10 +1438,17 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	memcpy(s.data(), dfx.data + levelData.dataOffset + 0xE0, 8);
 	level.name = GetLevelName(s, dfx.Read<u32>(0));
 
+	ApplyPathModels(level);
+
 	std::sort(level.models.begin() + currModelIndex, level.models.end(), [](std::shared_ptr<Model> a, std::shared_ptr<Model> b)
 		{
 			return a->name < b->name;
 		});
+
+	memcpy(level.pickupName[0], dfx.data + levelData.dataOffset + 0xEC, 8);
+	memcpy(level.pickupName[1], dfx.data + levelData.dataOffset + 0xF8, 8);
+	memcpy(level.pickupName[2], dfx.data + levelData.dataOffset + 0x104, 8);
+	level.pickupName[0][8] = level.pickupName[1][8] = level.pickupName[2][8] = '\0';
 
 	return true;
 }
