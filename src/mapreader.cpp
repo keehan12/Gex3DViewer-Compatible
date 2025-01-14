@@ -681,7 +681,8 @@ void AddLineToModel(std::shared_ptr<Model> model, glm::vec3 start, glm::vec3 end
 void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr_t ownerAddr, addr_t platformAddr)
 {
 	dfx.baseOffset = platformAddr + levelData.dataOffset;
-	addr_t pathStart = dfx.Read<addr_t>(0, true);
+	addr_t pathStart = dfx.Read<addr_t>(0);
+	addr_t rotsAddr = dfx.Read<addr_t>(4);
 	if (pathStart == 0)
 		return;
 	
@@ -699,6 +700,24 @@ void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr
 			dfx.Read<i16>(i * 0x20 + 6)
 		});
 	}
+
+	if (rotsAddr == 0)
+		return;
+
+	dfx.baseOffset = levelData.dataOffset + rotsAddr;
+	u16 nRots = dfx.Read<u16>(4);
+	dfx.baseOffset = levelData.dataOffset + dfx.Read<addr_t>(0);
+	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
+	for (u16 i = 0; i < nRots; ++i)
+	{
+		level.paths.rbegin()->rotations.push_back({
+			dfx.Read<u16>(i * 10 + 0),
+			dfx.Read<i16>(i * 10 + 2) * (1.f / 0x1000),
+			dfx.Read<i16>(i * 10 + 4) * (1.f / 0x1000),
+			dfx.Read<i16>(i * 10 + 6) * (1.f / 0x1000),
+			dfx.Read<i16>(i * 10 + 8) * (1.f / 0x1000)
+			});
+	}
 }
 
 void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr_t instanceAddr)
@@ -714,7 +733,13 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	}
 
 	if (modelIndex == level.models.size())
+	{
 		ReadObjectGeometry(dfx, level, levelData, modelAddr);
+		if (level.models[modelIndex]->hasNoTextures)
+		{
+			dfx.baseOffset = instanceAddr;
+		}
+	}
 	
 	dfx.baseOffset = instanceAddr;
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
@@ -824,6 +849,9 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 		"tvgen___",
 		"tvgurny_",
 		"mutant__",
+		"scorp___",
+		"sewertp_",
+		"casdraw_",
 
 		"@Path",
 	};
@@ -833,6 +861,31 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 			ReadMovingPlatform(dfx, level, levelData, instanceAddr, dfx.Read<addr_t>(0x28));
 			break;
 		}
+
+	//if (level.models[modelIndex]->name == "qmark___")
+	//{
+	//	auto& inst = *level.models[modelIndex]->instances.rbegin();
+	//	dfx.baseOffset = levelData.dataOffset + *(u32*)&inst.instanceData[0];
+	//	u16 nStrs = dfx.Read<u16>(0xA);
+	//	auto off = dfx.baseOffset;
+
+	//	for (u16 i = 0; i < nStrs; ++i)
+	//	{
+	//		dfx.baseOffset = off;
+	//		dfx.baseOffset = levelData.dataOffset + dfx.Read<u32>(0x10 + 0x8 * i);
+	//		int j = 0;
+	//		while (j < 255)
+	//		{
+	//			if (dfx.Read<char>(j) == '\0')
+	//				break;
+	//			++j;
+	//		}
+	//		char buffer[256] = { 0 };
+	//		memcpy_s(buffer, 255, dfx.data + dfx.baseOffset, j);
+	//		inst.qmarkText += std::string(buffer) + "\n";
+	//	}
+	//	inst.qmarkText.pop_back();
+	//}
 }
 
 struct GexTex_t
@@ -1300,27 +1353,6 @@ std::string GetLevelName(const std::string& levelStr, u32 dataOffsetRaw)
 void ApplyPathModels(level_t& level)
 {
 
-	auto Hexify = [](addr_t n) -> std::string
-		{
-			if (n == 0)
-				return "0";
-			std::string s;
-			while (n > 0)
-			{
-				if (n % 0x10 > 9)
-				{
-					s += 'a' + ((n % 0x10) - 10);
-				}
-				else
-				{
-					s += '0' + (n % 0x10);
-				}
-				n >>= 4;
-			}
-			std::reverse(s.begin(), s.end());
-			return s;
-		};
-
 	for (auto& p : level.paths)
 	{
 		if (p.points.size() == 0)
@@ -1396,7 +1428,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 		}
 	}
 
-	levelData.dataOffset = ((dfx.Read<u32>(0) + 0x200) >> 9) << 11;
+	level.baseData = levelData.dataOffset = ((dfx.Read<u32>(0) + 0x200) >> 9) << 11;
 	dfx.baseOffset = levelData.dataOffset;
 	
 	levelData.modelAddress = dfx.Read<addr_t>(0x3C);

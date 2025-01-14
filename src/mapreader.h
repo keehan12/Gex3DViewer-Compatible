@@ -14,6 +14,7 @@ struct objinstance_t
 	bool isVisible = true;
 	unsigned int address = 0;
 	unsigned int instanceData[4] = { 0 };
+	//std::string qmarkText;
 };
 
 struct Model
@@ -57,11 +58,18 @@ struct PathPoint
 	short x, y, z;
 };
 
+struct PathRotation
+{
+	unsigned int speed;
+	float rotX, rotY, rotZ, rotW;
+};
+
 struct Path
 {
 	unsigned int address;
 	unsigned int owner;
 	std::vector<PathPoint> points;
+	std::vector<PathRotation> rotations;
 };
 
 struct level_t
@@ -74,6 +82,28 @@ struct level_t
 	std::string name;
 	float bgColor[3];
 	char pickupName[3][9];
+	unsigned int baseData;
 };
 
 bool LoadLevel(const std::string& filepath, level_t& level);
+
+inline std::string Hexify(unsigned int n)
+{
+	if (n == 0)
+		return "0";
+	std::string s;
+	while (n > 0)
+	{
+		if (n % 0x10 > 9)
+		{
+			s += 'a' + ((n % 0x10) - 10);
+		}
+		else
+		{
+			s += '0' + (n % 0x10);
+		}
+		n >>= 4;
+	}
+	std::reverse(s.begin(), s.end());
+	return s;
+};

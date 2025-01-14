@@ -432,6 +432,20 @@ bool str_ends_with_nocase(std::string src, std::string trg)
     return true;
 }
 
+bool ImGui_CenteredButton(const char* label)
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+
+    float size = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
+    float avail = ImGui::GetContentRegionAvail().x;
+
+    ImGui::Spacing();
+    float off = (avail - size) * 0.5f;
+    if (off > 0.0f)
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
+    return ImGui::Button(label);
+};
+
 void DumpObjects(FILE* f, sleveldata_t& leveldata);
 void ExportModel(FILE* f, std::shared_ptr<Model> mdl);
 void ExportTextureSheet(FILE* f, sleveldata_t& leveldata);
@@ -552,21 +566,6 @@ int main()
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Temporary load button, +code to center it
-            auto ImGui_CenteredButton = [](const char* label) -> bool
-                {
-                    ImGuiStyle& style = ImGui::GetStyle();
-
-                    float size = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
-                    float avail = ImGui::GetContentRegionAvail().x;
-
-                    ImGui::Spacing();
-                    float off = (avail - size) * 0.5f;
-                    if (off > 0.0f)
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
-                    return ImGui::Button(label);
-                };
-
             if (ImGui::Checkbox("Toggle Wireframe Mode?", &wireframe))
                 SetWireframe(wireframe);
             ImGui::Checkbox("Toggle Vertex Color?", &vertexCols);
@@ -681,6 +680,65 @@ int main()
 
                     }
                 }
+            }
+
+            {
+                ImGui::Separator();
+                static char offsetInput[32] = { 0 };
+                static size_t offsetOutput = 0;
+
+                {
+                    float size = ImGui::CalcItemWidth() + style.FramePadding.x * 2.0f;
+                    float avail = ImGui::GetWindowContentRegionMax().x;
+
+                    ImGui::Spacing();
+                    float off = (avail - size) * 0.5f;
+                    if (off > 0.0f)
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
+                }
+
+                ImGui::InputText("##OffsetConvert", offsetInput, 31, ImGuiInputTextFlags_NoUndoRedo | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_CharsHexadecimal);
+                if (ImGui_CenteredButton("Convert to File Offset"))
+                {
+                    offsetOutput = 0;
+                    size_t len = strnlen(offsetInput, 31);
+                    for (size_t i = 0; i < len; ++i)
+                    {
+                        size_t n = 0;
+                        if ('0' <= offsetInput[i] && offsetInput[i] <= '9')
+                            n = offsetInput[i] - '0';
+                        else if ('a' <= offsetInput[i] && offsetInput[i] <= 'f')
+                            n = (offsetInput[i] - 'a') + 10;
+                        else if ('A' <= offsetInput[i] && offsetInput[i] <= 'F')
+                            n = (offsetInput[i] - 'A') + 10;
+
+                        offsetOutput += (n << (4 * ((len - 1) - i)));
+
+                    }
+
+                    offsetOutput += leveldata.level.baseData;
+                }
+                if (ImGui_CenteredButton("Convert from File Offset"))
+                {
+                    offsetOutput = 0;
+                    size_t len = strnlen(offsetInput, 31);
+                    for (size_t i = 0; i < len; ++i)
+                    {
+                        size_t n = 0;
+                        if ('0' <= offsetInput[i] && offsetInput[i] <= '9')
+                            n = offsetInput[i] - '0';
+                        else if ('a' <= offsetInput[i] && offsetInput[i] <= 'f')
+                            n = (offsetInput[i] - 'a') + 10;
+                        else if ('A' <= offsetInput[i] && offsetInput[i] <= 'F')
+                            n = (offsetInput[i] - 'A') + 10;
+
+                        offsetOutput += (n << (4 * ((len - 1) - i)));
+
+                    }
+
+                    offsetOutput -= leveldata.level.baseData;
+                }
+                ImGui::Text("Calculated Offset: 0x%.6X", offsetOutput);
             }
 
             const char* msg = "Shoutout to the /r/Gex Discord";
@@ -884,6 +942,7 @@ int main()
                             {
                                 g_CamPos = -inst.position;
                             }
+
                             ImGui::Separator();
                         }
                         ImGui::Unindent(8.f);
@@ -967,6 +1026,14 @@ void DumpObjects(FILE* f, sleveldata_t& leveldata)
         for (auto& pt : path.points)
         {
             sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"pos\": [%d, %d, %d]},", pt.speed, pt.x, pt.z, pt.y);
+            pstr += buffer;
+        }
+        if (pstr.rbegin()[0] == ',')
+            pstr.pop_back();
+        pstr += "\n\t\t\t],\n\t\t\t\"rotations\":[";
+        for (auto& pt : path.rotations)
+        {
+            sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"rot\": [%f, %f, %f, %f]},", pt.speed, pt.rotX, pt.rotY, pt.rotZ, pt.rotW);
             pstr += buffer;
         }
         if (pstr.rbegin()[0] == ',')
