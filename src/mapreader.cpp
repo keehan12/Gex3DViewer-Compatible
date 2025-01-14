@@ -715,7 +715,7 @@ void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr
 			dfx.Read<i16>(i * 10 + 2) * (1.f / 0x1000),
 			dfx.Read<i16>(i * 10 + 4) * (1.f / 0x1000),
 			dfx.Read<i16>(i * 10 + 6) * (1.f / 0x1000),
-			dfx.Read<i16>(i * 10 + 8) * (1.f / 0x1000)
+			dfx.Read<i16>(i * 10 + 8) * (-1.f / 0x1000)
 			});
 	}
 }
