@@ -6,15 +6,41 @@
 #include <unordered_map>
 #include <algorithm>
 
+#include <imgui/imgui.h>
+#include <set>
+
 struct file_t
 {
 	using data_t = unsigned char;
 	data_t* data;
 	size_t size;
-	unsigned int baseOffset = 0;
+	size_t baseOffset = 0;
 
 	template<typename T>
 	T Read(size_t offset, bool moveOffset = false)
+	{
+		T data = _Read<T>(baseOffset + offset + _getoffset());
+		if constexpr (std::endian::native == std::endian::big && sizeof(T) > 1)
+		{
+			using byte = unsigned char;
+			for (int i = 0; i < sizeof(T) >> 1; ++i)
+			{
+				static_cast<byte*>(&data)[i] ^= static_cast<byte*>(&data)[sizeof(T) - i - 1];
+				static_cast<byte*>(&data)[sizeof(T) - i - 1] ^= static_cast<byte*>(&data)[i];
+				static_cast<byte*>(&data)[i] ^= static_cast<byte*>(&data)[sizeof(T) - i - 1];
+			}
+		}
+
+		if (moveOffset)
+			offsets.back() += sizeof(T) + offset;
+
+		return data;
+	}
+
+	// Like Read, but ignores local offset, and thus also can't move the offset
+	// For whenever you only really need to read one value from base
+	template<typename T>
+	T ReadAt(size_t offset)
 	{
 		T data = _Read<T>(baseOffset + offset);
 		if constexpr (std::endian::native == std::endian::big && sizeof(T) > 1)
@@ -27,10 +53,34 @@ struct file_t
 				static_cast<byte*>(&data)[i] ^= static_cast<byte*>(&data)[sizeof(T) - i - 1];
 			}
 		}
-		if (moveOffset)
-			baseOffset += sizeof(T) + offset;
+
 		return data;
 	}
+
+	void seek(size_t offset, bool replace = false)
+	{
+		if (replace)
+		{
+			if (offsets.empty())
+				offsets.push_back(0);
+			offsets.back() = offset;
+		}
+		else
+			offsets.push_back(offset);
+	}
+
+	void pop()
+	{
+		if (!offsets.empty())
+			offsets.pop_back();
+	}
+
+	template<typename T = data_t>
+	T* ptr() { return (T*)(data + baseOffset + _getoffset()); }
+
+	// like ptr, but without a local offset
+	template<typename T = data_t>
+	T* ptrAt(size_t offset) { return (T*)(data + baseOffset + offset); }
 
 	void Close()
 	{
@@ -38,11 +88,20 @@ struct file_t
 		data = nullptr;
 		size = 0;
 		baseOffset = 0;
+		offsets.clear();
 	}
 
 	~file_t()
 	{
 		Close();
+	}
+
+	size_t _getoffset()
+	{
+		if (offsets.empty())
+			offsets.push_back(0);
+
+		return offsets.back();
 	}
 	
 private:
@@ -59,6 +118,8 @@ private:
 #endif
 		return *(T*)(data + offset);
 	}
+
+	std::vector<size_t> offsets;
 };
 
 void CreateCube(std::shared_ptr<Model> model)
@@ -113,7 +174,7 @@ ImagePacker::ImageInformation_t* FindImageInfoById(ImagePacker::ImageInformation
 	return nullptr;
 }
 
-void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std::string& name, int customId, int scale = 5)
+void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std::string& name, unsigned int customId, int scale = 5)
 {
 	model->name = name;
 
@@ -122,28 +183,28 @@ void CreateSpriteObject(level_t& level, std::shared_ptr<Model> model, const std:
 	model->vertices.push_back({  100 * scale, -100 * scale, 0,  100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
 	model->vertices.push_back({ -100 * scale, -100 * scale, 0, -100 * scale,  -100 * scale, 0, 0, 128, 128, 128, 255 });
 
-	model->polygons.push_back({ {2, 1, 0}, 0, 0, {{1, 1}, {1, 0}, {0, 0}} });
-	model->polygons.push_back({ {3, 2, 0}, 0, 0, {{0, 1}, {1, 1}, {0, 0}} });
+	model->polygons.push_back({ {2, 1, 0}, customId, 0, {{1, 1}, {1, 0}, {0, 0}} });
+	model->polygons.push_back({ {3, 2, 0}, customId, 0, {{0, 1}, {1, 1}, {0, 0}} });
 
-	if ((size_t)(customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
-	{
-		if (auto info = FindImageInfoById(level.list, customId))
-		{
-			for (int i = 0; i < 2; ++i)
-			{
-				auto& poly = model->polygons[i];
-				for (int j = 0; j < 3; ++j)
-				{
-					poly.uvs[j].x *= info->width;
-					poly.uvs[j].y *= info->height;
-					poly.uvs[j].x += info->x;
-					poly.uvs[j].y += info->y;
-					poly.uvs[j].x /= (float)level.sheet.w;
-					poly.uvs[j].y /= (float)level.sheet.h;
-				}
-			}
-		}
-	}
+	//if ((size_t)(customId - ECustomImageType::CUSTOM_IMAGE_BASE) < customImages.size())
+	//{
+	//	if (auto info = FindImageInfoById(level.list, customId))
+	//	{
+	//		for (int i = 0; i < 2; ++i)
+	//		{
+	//			auto& poly = model->polygons[i];
+	//			for (int j = 0; j < 3; ++j)
+	//			{
+	//				poly.uvs[j].x *= info->width;
+	//				poly.uvs[j].y *= info->height;
+	//				poly.uvs[j].x += info->x;
+	//				poly.uvs[j].y += info->y;
+	//				poly.uvs[j].x /= (float)level.sheet.w;
+	//				poly.uvs[j].y /= (float)level.sheet.h;
+	//			}
+	//		}
+	//	}
+	//}
 }
 
 bool ReadFile(const std::string& filepath, file_t& file)
@@ -174,7 +235,6 @@ using addr_t = u32;
 
 struct levelext_t
 {
-	u32 dataOffset;
 	addr_t modelAddress;
 	u32 nObjects;
 	addr_t objAddress;
@@ -202,7 +262,7 @@ struct geo_t
 
 void ReadVertices(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
 {
-	dfx.baseOffset = levelData.dataOffset + geo.vertexAddress;
+	dfx.seek(geo.vertexAddress);
 	for (u32 i = 0; i < geo.vertexCount; ++i)
 	{
 		model->vertices.push_back(
@@ -215,17 +275,20 @@ void ReadVertices(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 
 		if (!geo.isLevel)
 		{
-			model->vertices.rbegin()[0].r = 128;
-			model->vertices.rbegin()[0].g = 128;
-			model->vertices.rbegin()[0].b = 128;
-			model->vertices.rbegin()[0].a = 255;
+			model->vertices.back().r = 128;
+			model->vertices.back().g = 128;
+			model->vertices.back().b = 128;
+			model->vertices.back().a = 255;
 		}
 	}
+	dfx.pop();
 }
+
+std::set<unsigned int> materialsToFix;
 
 void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
 {
-	dfx.baseOffset = levelData.dataOffset + geo.polygonAddress;
+	dfx.seek(geo.polygonAddress);
 	bool hasTexturedFace = geo.isLevel;
 	for (u32 i = 0; i < geo.polygonCount; ++i)
 	{
@@ -235,42 +298,20 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 		polygon.vertex[1] = dfx.Read<u16>(stride * i + 2);
 		polygon.vertex[2] = dfx.Read<u16>(stride * i + 4);
 		polygon.flags = dfx.Read<byte>(stride * i + 7);
-		//if (polygon.flags & 1)
-		////if (geo.textureAnimAddress != NULL)
-		//{
-		//	printf("Flags: ");
-		//	for (int i = (sizeof(polygon.flags) * 8) - 1; i >= 0; --i)
-		//		printf("%c", ((polygon.flags >> i) & 1) + '0');
-		//	printf("\n");
-		//}
 
 		if (geo.isLevel)
 		{
 			addr_t materialAddr = dfx.Read<addr_t>(stride * i + 0x10);
 			if (materialAddr != 0xFFFF && (polygon.flags & 0x80) != 0x80)
 			{
-				auto currOffset = dfx.baseOffset;
-				dfx.baseOffset = levelData.dataOffset + materialAddr;
+				dfx.seek(materialAddr);
 				polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
 				polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
 				polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
 				polygon.materialID = dfx.Read<u16>(6) % 0x1000;
-
-
-				if (auto info = FindImageInfoById(level.list, polygon.materialID))
-				{
-					for (int j = 0; j < 3; ++j)
-					{
-						polygon.uvs[j].x *= info->width;
-						polygon.uvs[j].y *= info->height;
-						polygon.uvs[j].x += info->x;
-						polygon.uvs[j].y += info->y;
-						polygon.uvs[j].x /= (float)level.sheet.w;
-						polygon.uvs[j].y /= (float)level.sheet.h;
-					}
-				}
-
-				dfx.baseOffset = currOffset;
+				if ((dfx.Read<byte>(2) & 2))
+					materialsToFix.insert(polygon.materialID);
+				dfx.pop();
 			}
 			else
 			{
@@ -279,15 +320,6 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 				polygon.uvs[2].x = polygon.uvs[2].y = 0;
 				polygon.materialID = 0xFFFFFFFF;
 			}
-
-			//if (materialAddr == 0xFFFF)
-			//	polygon.flags |= 0x8000;
-			//level.models[0]->vertices.push_back(
-			//	{
-			//		dfx.Read<i16>(i * 12 + 0), dfx.Read<i16>(i * 12 + 2), dfx.Read<i16>(i * 12 + 4),
-			//		dfx.Read<u16>(i * 12 + 6),
-			//		dfx.Read<byte>(i * 12 + 8), dfx.Read<byte>(i * 12 + 9), dfx.Read<byte>(i * 12 + 10), dfx.Read<byte>(i * 12 + 11)
-			//	});
 		}
 		else
 		{
@@ -295,84 +327,55 @@ void ReadPolygons(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo
 			{
 				hasTexturedFace = true;
 				addr_t materialAddr = dfx.Read<addr_t>(stride * i + 8);
-				auto currOffset = dfx.baseOffset;
-				dfx.baseOffset = levelData.dataOffset + materialAddr;
-				polygon.materialID = ((polygon.flags & 8) == 0) ? dfx.Read<u16>(6) : geo.textureAnimAddress;
-				//if (materialAddr >= 0x1000)
-				//	printf("Material: (%X)|(%X) > %s\n", polygon.materialID / 0x1000, polygon.materialID % 0x1000, (polygon.flags & 8) ? "true" : "false");
-				if (model->name == "charger_" || model->name == "batt____" || model->name == "launch__")
-				{
-					printf("MAT: %d, FLG: %x\n", polygon.materialID, polygon.flags);
-				}
-				if ((polygon.flags & 8) == 8)
-				{
-					//printf("  -8POLY: 0x%X\n", polygon.materialID);
-					//was = dfx.baseOffset;
-					//dfx.baseOffset = levelData.dataOffset + geo.textureAnimAddress;
-					//u32 count = dfx.Read<u32>(0, true);
-					////loop:
-					//u32 index = 0 % count;
-					//dfx.baseOffset = levelData.dataOffset + dfx.Read<addr_t>(0xC * index) + 0x10;
-					////nSubframes
-					////polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
-					////polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
-					////polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
-					//polygon.materialID = dfx.Read<u16>(6/* + 0x70*/);
-
-					//if (auto info = FindImageInfoById(level.list, polygon.materialID))
-					//{
-					//	for (int j = 0; j < 3; ++j)
-					//	{
-					//		polygon.uvs[j].x *= info->width;
-					//		polygon.uvs[j].y *= info->height;
-					//		polygon.uvs[j].x += info->x;
-					//		polygon.uvs[j].y += info->y;
-					//		polygon.uvs[j].x /= (float)level.sheet.w;
-					//		polygon.uvs[j].y /= (float)level.sheet.h;
-					//	}
-					//}
-					//dfx.baseOffset = was;
-				}
+				dfx.seek(materialAddr);
+				//polygon.materialID = dfx.Read<u16>(6) % 0x1000;
+				//if (model->name == "charger_" || model->name == "batt____" || model->name == "launch__")
+				//{
+				//	printf("MAT: %d, FLG: %x\n", polygon.materialID, polygon.flags);
+				//}
 				
-				polygon.materialID = dfx.Read<u16>(6) % 0x1000;
+				//polygon.materialID = dfx.Read<u16>(6) % 0x1000;
+				//if (geo.textureAnimAddress != 0 && (polygon.flags & 0x8))
+				//{
+				//	dfx.seek(geo.textureAnimAddress);
+				//	dfx.seek(dfx.Read<addr_t>(4), true);
+				//	polygon.materialID = dfx.Read<u16>(6) % 0x1000;
+				//	//polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
+				//	//polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
+				//	//polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
+				//	dfx.pop();
+				//}
+				//else
+				{
+					polygon.materialID = dfx.Read<u16>(6) % 0x1000;
+				}
+
 				polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
 				polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
 				polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
-
-				if (auto info = FindImageInfoById(level.list, polygon.materialID))
-				{
-					for (int j = 0; j < 3; ++j)
-					{
-						polygon.uvs[j].x *= info->width;
-						polygon.uvs[j].y *= info->height;
-						polygon.uvs[j].x += info->x;
-						polygon.uvs[j].y += info->y;
-						polygon.uvs[j].x /= (float)level.sheet.w;
-						polygon.uvs[j].y /= (float)level.sheet.h;
-					}
-				}
-				else
-				{
-					printf("Can't find texture info for material 0x%X (%lu)\n", polygon.materialID, polygon.materialID);
-				}
+				if ((dfx.Read<byte>(2) & 2))
+					materialsToFix.insert(polygon.materialID);
 				
-
-				dfx.baseOffset = currOffset;
+				dfx.pop();
 			}
 			else
 			{
 				polygon.materialID = 0xFFFFFFFF;
+				for (int j = 0; j < 4; ++j)
+				{
+					polygon.optColors[j] = dfx.Read<byte>(8 + j);
+				}
 			}
 		}
 		model->polygons.push_back(polygon);
 	}
 	model->hasNoTextures = !hasTexturedFace;
+	dfx.pop();
 }
 
 void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, std::shared_ptr<Model> model)
 {
-	u32 was = dfx.baseOffset;
-	dfx.baseOffset = levelData.dataOffset + levelData.skyboxAddress;
+	dfx.seek(levelData.skyboxAddress);
 
 	model->name = "@Skybox";
 	model->instances.push_back({ {0, 0, 0}, {0, 0, 0} });
@@ -385,8 +388,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 		addr_t polyAddr = dfx.Read<addr_t>(0, true);
 		u32 nVerts = dfx.Read<u32>(8, true);
 
-		u32 offset = dfx.baseOffset;
-		dfx.baseOffset = levelData.dataOffset + vertAddr;
+		dfx.seek(vertAddr);
 		for (u32 v = 0; v < nVerts; ++v)
 		{
 			int x = (short)(dfx.Read<i16>(0, true)) * 20;
@@ -396,7 +398,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 			model->vertices.push_back(Model::vertex_t{ x, z, -y, x, z, -y, n, 128, 128, 128, 255 });
 		}
 
-		dfx.baseOffset = levelData.dataOffset + polyAddr;
+		dfx.seek(polyAddr, true);
 		for (u32 p = 0; p < nPoly; ++p)
 		{
 			Model::polygon_t poly;
@@ -407,7 +409,7 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 
 			addr_t materialAddress = dfx.Read<addr_t>(0, true);
 			u32 tempOffset = dfx.baseOffset;
-			dfx.baseOffset = levelData.dataOffset + materialAddress;
+			dfx.seek(materialAddress);
 			poly.uvs[0].x = dfx.Read<byte>(0, true) / 255.f;
 			poly.uvs[0].y = dfx.Read<byte>(0, true) / 255.f;
 			poly.uvs[1].x = dfx.Read<byte>(2, true) / 255.f;
@@ -415,34 +417,32 @@ void ReadSkybox(file_t& dfx, level_t& level, levelext_t& levelData, geo_t& geo, 
 			poly.materialID = dfx.Read<u16>(0, true) % 0x1000;
 			poly.uvs[2].x = dfx.Read<byte>(0, true) / 255.f;
 			poly.uvs[2].y = dfx.Read<byte>(0, true) / 255.f;
-			dfx.baseOffset = tempOffset;
+			dfx.pop();
 
-			if (auto info = FindImageInfoById(level.list, poly.materialID))
-			{
-				for (int j = 0; j < 3; ++j)
-				{
-					poly.uvs[j].x *= info->width;
-					poly.uvs[j].y *= info->height;
-					poly.uvs[j].x += info->x;
-					poly.uvs[j].y += info->y;
-					poly.uvs[j].x /= (float)level.sheet.w;
-					poly.uvs[j].y /= (float)level.sheet.h;
-				}
-			}
+			//if (auto info = FindImageInfoById(level.list, poly.materialID))
+			//{
+			//	for (int j = 0; j < 3; ++j)
+			//	{
+			//		poly.uvs[j].x *= info->width;
+			//		poly.uvs[j].y *= info->height;
+			//		poly.uvs[j].x += info->x;
+			//		poly.uvs[j].y += info->y;
+			//		poly.uvs[j].x /= (float)level.sheet.w;
+			//		poly.uvs[j].y /= (float)level.sheet.h;
+			//	}
+			//}
 
 			model->polygons.push_back(poly);
 		}
-
-		dfx.baseOffset = offset;
+		dfx.pop();
 	}
-
-	dfx.baseOffset = was;
+	dfx.pop();
 }
 
 void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_t geometryAddress)
 {
+	dfx.seek(geometryAddress);
 	geo_t geo;
-	dfx.baseOffset += geometryAddress;
 	geo.isLevel = true;
 	geo.bspAddress = dfx.Read<addr_t>(0);
 	geo.vertexCount = dfx.Read<u32>(0x18);
@@ -453,7 +453,7 @@ void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_
 	geo.vertexColorAddress = dfx.Read<addr_t>(0x2C);
 	geo.materialAddress = dfx.Read<addr_t>(0x30);
 	level.models.push_back(std::make_shared<Model>(0xFFFF'FFFF));
-	(*level.models.rbegin())->name = "@Level";
+	level.models.back()->name = "@Level";
 
 	ReadVertices(dfx, level, levelData, geo, level.models[0]);
 	ReadPolygons(dfx, level, levelData, geo, level.models[0]);
@@ -462,17 +462,17 @@ void ReadLevelGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_
 	ReadSkybox(dfx, level, levelData, geo, skybox);
 	level.models.push_back(skybox);
 
-	dfx.baseOffset = levelData.dataOffset;
+	dfx.pop();
 }
 
 void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr_t modelAddr)
 {
-	dfx.baseOffset = modelAddr + levelData.dataOffset;
+	dfx.seek(modelAddr);
 	auto model = std::make_shared<Model>(modelAddr);
 	level.models.push_back(model);
 	addr_t modelNameAddr = dfx.Read<addr_t>(0x24);
 	char name[9] = { 0 };
-	memcpy(name, dfx.data + levelData.dataOffset + modelNameAddr, 8);
+	memcpy(name, dfx.ptrAt<byte>(modelNameAddr), 8);
 	printf("Reading %s model data...\n", name);
 	model->name = name;
 
@@ -488,10 +488,11 @@ void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr
 
 	u16 objCount = dfx.Read<u16>(8);
 	addr_t objStartAddr = dfx.Read<u32>(12);
+
 	for (u16 i = 0; i < objCount; ++i)
 	{
-		dfx.baseOffset = 0;
-		dfx.baseOffset = levelData.dataOffset + dfx.Read<addr_t>(levelData.dataOffset + objStartAddr + i * 4);
+		dfx.seek(0, true);
+		dfx.seek(dfx.Read<addr_t>(objStartAddr + i * 4), true);
 
 		geo_t geo;
 
@@ -504,51 +505,11 @@ void ReadObjectGeometry(file_t& dfx, level_t& level, levelext_t& levelData, addr
 		geo.boneAddress = dfx.Read<addr_t>(2, true);
 		geo.textureAnimAddress = dfx.Read<addr_t>(0, true);
 
-		if (geo.textureAnimAddress != NULL)
-		{
-			printf("Animated textures detected (0x%X)!\n", geo.textureAnimAddress);
-			dfx.baseOffset = levelData.dataOffset + geo.textureAnimAddress;
-			//was = dfx.baseOffset;
-			//dfx.baseOffset = levelData.dataOffset + geo.textureAnimAddress;
-			u32 count = dfx.Read<u32>(0, true);
-			for (u32 i = 0; i < count; ++i)
-			{
-				u32 offset = dfx.baseOffset;
-				addr_t matAddr = dfx.Read<addr_t>(0);
-				u32 nSubframe = dfx.Read<addr_t>(4);
-				for (u32 j = 0; j < nSubframe; ++j)
-				{
-					//printf("  matAddr: 0x%X\n", matAddr);
-				}
-				dfx.baseOffset = offset + 0xC;
-			}
-			////loop:
-			//u32 index = 0 % count;
-			//dfx.baseOffset = levelData.dataOffset + dfx.Read<addr_t>(0xC * index) + 0x10;
-			////nSubframes
-			////polygon.uvs[0] = { dfx.Read<byte>(0) / 255.f, dfx.Read<byte>(1) / 255.f };
-			////polygon.uvs[1] = { dfx.Read<byte>(4) / 255.f, dfx.Read<byte>(5) / 255.f };
-			////polygon.uvs[2] = { dfx.Read<byte>(8) / 255.f, dfx.Read<byte>(9) / 255.f };
-			//polygon.materialID = dfx.Read<u16>(6/* + 0x70*/);
-
-			//if (auto info = FindImageInfoById(level.list, polygon.materialID))
-			//{
-			//	for (int j = 0; j < 3; ++j)
-			//	{
-			//		polygon.uvs[j].x *= info->width;
-			//		polygon.uvs[j].y *= info->height;
-			//		polygon.uvs[j].x += info->x;
-			//		polygon.uvs[j].y += info->y;
-			//		polygon.uvs[j].x /= (float)level.sheet.w;
-			//		polygon.uvs[j].y /= (float)level.sheet.h;
-			//	}
-			//}
-			//dfx.baseOffset = was;
-		}
-
 		ReadVertices(dfx, level, levelData, geo, model);
 		ReadPolygons(dfx, level, levelData, geo, model);
 	}
+
+	dfx.pop();
 }
 
 std::shared_ptr<Model> CreatePathPointObject(level_t& level, addr_t addr)
@@ -678,22 +639,22 @@ void AddLineToModel(std::shared_ptr<Model> model, glm::vec3 start, glm::vec3 end
 		});
 }
 
-void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr_t ownerAddr, addr_t platformAddr)
+void ReadMovingPlatform(file_t& dfx, level_t& level, addr_t ownerAddr, addr_t platformAddr)
 {
-	dfx.baseOffset = platformAddr + levelData.dataOffset;
+	dfx.seek(platformAddr);
 	addr_t pathStart = dfx.Read<addr_t>(0);
 	addr_t rotsAddr = dfx.Read<addr_t>(4);
-	if (pathStart == 0)
+	if (pathStart == 0 || platformAddr == 0)
 		return;
 	
-	dfx.baseOffset = levelData.dataOffset + pathStart;
+	dfx.seek(pathStart, true);
 	addr_t pointsAddr = dfx.Read<addr_t>(0);
 	u16 nPoints = dfx.Read<u16>(4);
 	level.paths.push_back({dfx.baseOffset, ownerAddr});
-	dfx.baseOffset = levelData.dataOffset + pointsAddr;
+	dfx.seek(pointsAddr, true);
 	for (u16 i = 0; i < nPoints; ++i)
 	{
-		level.paths.rbegin()->points.push_back({
+		level.paths.back().points.push_back({
 			dfx.Read<u16>(i * 0x20 + 0),
 			dfx.Read<i16>(i * 0x20 + 2),
 			dfx.Read<i16>(i * 0x20 + 4),
@@ -704,13 +665,13 @@ void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	if (rotsAddr == 0)
 		return;
 
-	dfx.baseOffset = levelData.dataOffset + rotsAddr;
+	dfx.seek(rotsAddr, true);
 	u16 nRots = dfx.Read<u16>(4);
-	dfx.baseOffset = levelData.dataOffset + dfx.Read<addr_t>(0);
+	dfx.seek(dfx.Read<addr_t>(0), true);
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
 	for (u16 i = 0; i < nRots; ++i)
 	{
-		level.paths.rbegin()->rotations.push_back({
+		level.paths.back().rotations.push_back({
 			dfx.Read<u16>(i * 10 + 0),
 			dfx.Read<i16>(i * 10 + 2) * (1.f / 0x1000),
 			dfx.Read<i16>(i * 10 + 4) * (1.f / 0x1000),
@@ -718,12 +679,14 @@ void ReadMovingPlatform(file_t& dfx, level_t& level, levelext_t& levelData, addr
 			dfx.Read<i16>(i * 10 + 8) * (-1.f / 0x1000)
 			});
 	}
+
+	dfx.pop();
 }
 
 void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr_t instanceAddr)
 {
-	dfx.baseOffset = 0;
-	addr_t modelAddr = dfx.Read<addr_t>(instanceAddr);
+	dfx.seek(instanceAddr);
+	addr_t modelAddr = dfx.Read<addr_t>(0);
 	u32 modelIndex = 0;
 	for (auto& m : level.models)
 	{
@@ -735,17 +698,12 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 	if (modelIndex == level.models.size())
 	{
 		ReadObjectGeometry(dfx, level, levelData, modelAddr);
-		if (level.models[modelIndex]->hasNoTextures)
-		{
-			dfx.baseOffset = instanceAddr;
-		}
 	}
 	
-	dfx.baseOffset = instanceAddr;
 	constexpr float c_PI_2_FROM_1024 = glm::pi<float>() / 2048.f;
 	glm::vec3 rot = { dfx.Read<i16>(10) * c_PI_2_FROM_1024, dfx.Read<i16>(12) * -c_PI_2_FROM_1024, dfx.Read<i16>(14) * c_PI_2_FROM_1024 };
 	glm::vec3 pos = { -dfx.Read<i16>(16) * 0.001f, -dfx.Read<i16>(20) * 0.001f, dfx.Read<i16>(18) * 0.001f };
-	level.models[modelIndex]->instances.push_back({ pos, rot, true, instanceAddr,
+	level.models[modelIndex]->instances.push_back({ pos, rot, true, instanceAddr + dfx.baseOffset,
 		{
 			dfx.Read<u32>(0x20),
 			dfx.Read<u32>(0x24),
@@ -753,6 +711,10 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 			dfx.Read<u32>(0x2C),
 		}
 	});
+
+	dfx.pop();
+
+#define ADDCOMPONENT(Type, Offset) level.models[modelIndex]->instances.back().AddComponent<Type>().ParseData(dfx, level, level.models[modelIndex]->instances.back().instanceData[Offset]);
 
 	// Custom parsing for some stuff
 	std::vector<const char*> listOfPlatformTypes = {
@@ -855,12 +817,27 @@ void ReadObjectInstance(file_t& dfx, level_t& level, levelext_t& levelData, addr
 
 		"@Path",
 	};
-	for(auto& n : listOfPlatformTypes)
+	for (auto& n : listOfPlatformTypes)
+	{
 		if (level.models[modelIndex]->name == n)
 		{
-			ReadMovingPlatform(dfx, level, levelData, instanceAddr, dfx.Read<addr_t>(0x28));
+			ADDCOMPONENT(PathComponent, 2);
 			break;
 		}
+	}
+
+
+	if (level.models[modelIndex]->name == "lvltv___")
+	{
+		ADDCOMPONENT(LevelTVComponent, 0);
+	}
+	
+	if (level.models[modelIndex]->name == "powertv_" || level.models[modelIndex]->name == "circitv_")
+	{
+		ADDCOMPONENT(FlyBoxComponent, 0);
+	}
+
+#undef ADDCOMPONENT
 
 	//if (level.models[modelIndex]->name == "qmark___")
 	//{
@@ -920,22 +897,22 @@ auto GetImageSizeFromTexture(GrLOD_t lod, GrAspectRatio_t aspect)
 	switch (aspect)
 	{
 	case GrAspectRatio_t::GR_ASPECT_8x1:
-		return size{ magicNum, magicNum >> 3 };
+		return size{ magicNum, magicNum };
 
 	case GrAspectRatio_t::GR_ASPECT_4x1:
-		return size{ magicNum, magicNum >> 2 };
+		return size{ magicNum, magicNum };
 
 	case GrAspectRatio_t::GR_ASPECT_2x1:
-		return size{ magicNum, magicNum >> 1 };
+		return size{ magicNum, magicNum };
 
 	case GrAspectRatio_t::GR_ASPECT_1x2:
-		return size{ magicNum >> 1, magicNum };
+		return size{ magicNum, magicNum >> 1 };
 
 	case GrAspectRatio_t::GR_ASPECT_1x4:
-		return size{ magicNum >> 2, magicNum };
+		return size{ magicNum, magicNum >> 2 };
 
 	case GrAspectRatio_t::GR_ASPECT_1x8:
-		return size{ magicNum >> 3, magicNum };
+		return size{ magicNum, magicNum >> 3 };
 
 	default:
 	case GrAspectRatio_t::GR_ASPECT_1x1:
@@ -1128,7 +1105,7 @@ void LoadTextures(const std::string& filepath, level_t& level)
 			BlitTex(level.sheet, texture_t{ w, h, t }, info->x, info->y);
 		}
 		//delete[] t;
-		level.textures.push_back(texture_t{ w, h, t });
+		level.textures.push_back(texture_t{ w, h, t, true, gexTex.info.format == GrTextureFormat_t::GR_TEXFMT_ARGB_1555 });
 	}
 	
 	for(size_t i = 0; i < customImages.size(); ++i)
@@ -1383,9 +1360,9 @@ void ApplyPathModels(level_t& level)
 		}
 
 		AddDiamondToModel(mdl, glm::vec3{
-				p.points.rbegin()->x,
-				p.points.rbegin()->z,
-				-p.points.rbegin()->y,
+				p.points.back().x,
+				p.points.back().z,
+				-p.points.back().y,
 			}, 50.f);
 	}
 }
@@ -1428,8 +1405,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 		}
 	}
 
-	level.baseData = levelData.dataOffset = ((dfx.Read<u32>(0) + 0x200) >> 9) << 11;
-	dfx.baseOffset = levelData.dataOffset;
+	dfx.baseOffset = level.baseData = ((dfx.Read<u32>(0) + 0x200) >> 9) << 11;
 	
 	levelData.modelAddress = dfx.Read<addr_t>(0x3C);
 	levelData.nObjects = dfx.Read<u32>(0x78);
@@ -1447,8 +1423,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	level.models.push_back(misc);
 
 	// Create spawn point
-	dfx.baseOffset = levelData.dataOffset;
-	std::shared_ptr<Model> spawn = std::make_shared<Model>(levelData.dataOffset + 0x28);
+	std::shared_ptr<Model> spawn = std::make_shared<Model>(dfx.baseOffset + 0x28);
 	CreateSpriteObject(level, spawn, "$Spawn", ECustomImageType::INFO_SPAWN);
 	level.models.push_back(spawn);
 	spawn->instances.push_back({});
@@ -1458,7 +1433,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 
 	for (u32 i = 0; i < levelData.nObjects; ++i)
 	{
-		ReadObjectInstance(dfx, level, levelData, levelData.dataOffset + levelData.objAddress + 0x30 * i);
+		ReadObjectInstance(dfx, level, levelData, levelData.objAddress + 0x30 * i);
 	}
 
 	// By treating the level as a model, we need to give it an instance
@@ -1467,7 +1442,7 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 	dfx.baseOffset = 0;
 	std::string s;
 	s.resize(8);
-	memcpy(s.data(), dfx.data + levelData.dataOffset + 0xE0, 8);
+	memcpy(s.data(), dfx.ptrAt<char>(0xE0), 8);
 	level.name = GetLevelName(s, dfx.Read<u32>(0));
 
 	ApplyPathModels(level);
@@ -1477,10 +1452,99 @@ bool LoadLevel(const std::string& filepath, level_t& level)
 			return a->name < b->name;
 		});
 
-	memcpy(level.pickupName[0], dfx.data + levelData.dataOffset + 0xEC, 8);
-	memcpy(level.pickupName[1], dfx.data + levelData.dataOffset + 0xF8, 8);
-	memcpy(level.pickupName[2], dfx.data + levelData.dataOffset + 0x104, 8);
+	memcpy(level.pickupName[0], dfx.ptrAt<char>(0xEC), 8);
+	memcpy(level.pickupName[1], dfx.ptrAt<char>(0xF8), 8);
+	memcpy(level.pickupName[2], dfx.ptrAt<char>(0x104), 8);
 	level.pickupName[0][8] = level.pickupName[1][8] = level.pickupName[2][8] = '\0';
 
+	// Apply object UVs
+	for(auto& mdl : level.models)
+		for(auto& poly : mdl->polygons)
+			if (auto info = FindImageInfoById(level.list, poly.materialID))
+			{
+				//auto& poly = mdl->polygons[i];
+				for (int j = 0; j < 3; ++j)
+				{
+					poly.uvs[j].x *= info->width;
+					poly.uvs[j].y *= info->height;
+					poly.uvs[j].x += info->x;
+					poly.uvs[j].y += info->y;
+					poly.uvs[j].x /= (float)level.sheet.w;
+					poly.uvs[j].y /= (float)level.sheet.h;
+				}
+			}
+
+	for (auto mat : materialsToFix)
+	{
+		if (mat >= level.textures.size() || !level.textures[mat].argb1555)
+			continue;
+
+		if (auto info = FindImageInfoById(level.list, mat))
+		{
+			for (int y = 0; y < info->height; ++y)
+			{
+				for (int x = 0; x < info->width; ++x)
+				{
+					auto& p = level.sheet.pixels[level.sheet.w * (y + info->y) + x + info->x];
+					if (p.r < (1 / 256.f) && p.g < (1 / 256.f) && p.b < (1 / 256.f))
+						p.a = 0.f;
+					//p.g = 0.f;
+					//p.r = p.b = 255.f;
+				}
+			}
+			//BlitTex(level.sheet, level.textures[mat], info->x, info->y);
+		}
+	}
+	materialsToFix.clear();
+
 	return true;
+}
+
+void PathComponent::ParseData(file_t& file, level_t& level, unsigned int data)
+{
+	ReadMovingPlatform(file, level, data, data);
+}
+
+void LevelTVComponent::ParseData(file_t& file, level_t& level, unsigned int data)
+{
+	file.seek(data);
+	screenType = file.Read<byte>(0);
+	levelNum = file.Read<byte>(2);
+	strncpy_s(levelType, file.ptr<char>() + 4, strnlen(file.ptr<char>() + 4, 8));
+	file.pop();
+}
+
+void LevelTVComponent::RenderGUI(level_t& level, void* textureSheet)
+{
+	ImGui::Text("Level ID: %s%d", levelType, levelNum);
+
+	if (auto info = FindImageInfoById(level.list, 200 + screenType))
+	{
+		ImGui::SameLine();
+		ImGui::Image(textureSheet, { 16, 16 },
+			{ info->x / (float)level.sheet.w, info->y / (float)level.sheet.h },
+			{ (info->x + info->width) / (float)level.sheet.w, (info->y + info->height) / (float)level.sheet.h }
+		);
+	}
+}
+
+void FlyBoxComponent::ParseData(file_t& file, level_t& level, unsigned int data)
+{
+	if (data == 0)
+		flyBoxType = 0;
+	else
+		flyBoxType = file.ReadAt<byte>(data);
+}
+
+void FlyBoxComponent::RenderGUI(level_t& level, void* textureSheet)
+{
+	static const char* const c_FlyTypeText[] = {
+		"Health",
+		"Fire",
+		"Ice",
+		"Unused",
+		"Extra Life",
+		"Checkpoint"
+	};
+	ImGui::Text("Fly type: %s", c_FlyTypeText[flyBoxType]);
 }

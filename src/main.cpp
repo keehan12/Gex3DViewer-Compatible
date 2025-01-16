@@ -66,6 +66,13 @@ std::string OpenSavePrompt(const char* filter) {}
 glm::vec3 g_CamPos = { 0, 0, 0 };
 glm::vec2 g_CamRot = { 0, 0 };
 
+struct sleveldata_t
+{
+    level_t level;
+    GLuint texid = 0;
+    bool open = false;
+} leveldata;
+
 struct Vertex
 {
     glm::vec3 position;
@@ -97,13 +104,6 @@ static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 
     g_CamPos += GetForwardVector() * (float)yoffset;
 }
-
-struct sleveldata_t
-{
-    level_t level;
-    GLuint texid = 0;
-    bool open = false;
-};
 
 static void mouse_callback(GLFWwindow* window, double x, double y)
 {
@@ -155,6 +155,9 @@ static void mousebtn_callback(GLFWwindow* window, int button, int action, int mo
     }
 }
 
+glm::mat4 camera(const glm::mat4& model);
+
+//void createlinemodel(glm::vec3 start, glm::vec3 end);
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
@@ -163,6 +166,24 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     if (key == GLFW_KEY_X && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
     {
         SetWireframe(!wireframe);
+    }
+    else if (key == GLFW_KEY_C && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
+    {
+        // code for generating a line from the camera
+        //auto mat4 = glm::inverse(camera(glm::identity<glm::mat4>()));
+        //double x, y;
+        //int w, h;
+        //glfwGetWindowSize(window, &w, &h);
+        //glfwGetCursorPos(window, &x, &y);
+        //glm::vec4 v{ x / w * 2, -y / h * 2, -1, 1};
+        //v.x -= 1;
+        //v.y += 1;
+        //glm::vec4 nr = mat4 * v;
+        //v.z = 1;
+        //glm::vec4 fr = mat4 * v;
+        //
+        //glm::vec3 lineVector = glm::normalize(glm::vec3(fr / fr.w - nr / nr.w)) * 1000.f;
+        //createlinemodel(g_CamPos, g_CamPos + (glm::normalize(glm::vec3(fr / fr.w - nr / nr.w)) * 10.f));
     }
 }
 
@@ -178,6 +199,9 @@ glm::mat4 camera(const glm::mat4& model)
     {
         int w, h;
         glfwGetWindowSize(g_Window, &w, &h);
+        if (w == 0 || h == 0)
+            return model;
+
         Projection = glm::perspective(glm::pi<float>() * 0.25f, w / (float)h, 0.1f, 1000.f);
         View = glm::lookAt(g_CamPos, g_CamPos + GetForwardVector() * 10.f, GetUpVector());
         cameraInvalidated = false;
@@ -197,6 +221,9 @@ bool IsBillboardObject(const std::string& name)
     const char* BillboardObjectNames[] = {
         "nflame__",
         "mflame__",
+        "magic___",
+
+        "invis___",
 
         "charger_",
         "steam___",
@@ -340,15 +367,22 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
             auto& v = model->vertices[p.vertex[i]];
             ptr->vertices.push_back({ {v.x / 1000.f, v.y / 1000.f, v.z / 1000.f}, {v.r / 255.f, v.g / 255.f, v.b / 255.f, v.a / 255.f}, p.uvs[i] });
             if (p.materialID == 0xFFFF'FFFF)
-                if (model->hasNoTextures)
+                if ((p.flags & 0x2) == 0 && model->name != "@Level")
                 {
-                    auto& c = ptr->vertices.rbegin()->color;
+                    auto& c = ptr->vertices.back().color;
+                    if (p.optColors[3] != 0)
+                    {
+                        c.r = p.optColors[0] / 255.f;
+                        c.g = p.optColors[1] / 255.f;
+                        c.b = p.optColors[2] / 255.f;
+                        c.a = 1.f;
+                    }
                     c.r /= 2;
                     c.g /= 2;
                     c.b /= 2;
                 }
                 else
-                    ptr->vertices.rbegin()->color.a = 0.f;
+                    ptr->vertices.back().color.a = 0.f;
         }
     }
 
@@ -360,6 +394,18 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
 
     return ptr;
 }
+
+//void createlinemodel(glm::vec3 start, glm::vec3 end)
+//{
+//    static int i = 0;
+//    std::shared_ptr<Model> m = std::make_shared<Model>(0xFFFF'0000 + (i++));
+//    m->instances.push_back({{ 0, 0, 0 }, { 0, 0, 0 } });
+//    m->hasNoTextures = true;
+//    m->name = "@DEBUG-Line-" + std::to_string(i);
+//    AddLineToModel(m, start * 1000.f, end * 1000.f);
+//    mdls.push_back(createobj(m));
+//    leveldata.level.models.push_back(m);
+//}
 
 ImVec4 bgColor = { 0xBB / 255.f, 0xF6 / 255.f, 0xF7 / 255.f, 255 };
 
@@ -476,8 +522,6 @@ int main()
     if (!LoadShader(program, { "../data/shaders/basic.vert", "../data/shaders/basic.frag" }))
         if (!LoadShader(program, { "./data/shaders/basic.vert", "./data/shaders/basic.frag" }))
             return 1;
-
-    sleveldata_t leveldata;
 
     std::vector<Vertex> vertices = {
         {{-10, -10, 50}, {0.5f, 0.5f, 0.5f, 0.5f}, {1, 1}},
@@ -924,6 +968,8 @@ int main()
                             {
                                 ImGui::Text("Address: 0x%.6x", inst.address);
                             }
+                            for (auto& c : inst.components)
+                                c->RenderGUI(leveldata.level, (void*)leveldata.texid);
                             ImGui::Text("Instance Data:\n");
                             for (int i = 0; i < 16; ++i)
                             {
@@ -1028,7 +1074,7 @@ void DumpObjects(FILE* f, sleveldata_t& leveldata)
             sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"pos\": [%d, %d, %d]},", pt.speed, pt.x, pt.z, pt.y);
             pstr += buffer;
         }
-        if (pstr.rbegin()[0] == ',')
+        if (pstr.back() == ',')
             pstr.pop_back();
         pstr += "\n\t\t\t],\n\t\t\t\"rotations\":[";
         for (auto& pt : path.rotations)
@@ -1036,11 +1082,11 @@ void DumpObjects(FILE* f, sleveldata_t& leveldata)
             sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"rot\": [%f, %f, %f, %f]},", pt.speed, pt.rotX, pt.rotY, pt.rotZ, pt.rotW);
             pstr += buffer;
         }
-        if (pstr.rbegin()[0] == ',')
+        if (pstr.back() == ',')
             pstr.pop_back();
         pstr += "\n\t\t\t]\n\t\t},";
     }
-    if (pstr.rbegin()[0] == ',')
+    if (pstr.back() == ',')
         pstr.pop_back();
     fwrite(pstr.data(), pstr.length(), 1, f);
     fwrite("\n\t],\n", 5, 1, f);
