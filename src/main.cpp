@@ -66,13 +66,6 @@ std::string OpenSavePrompt(const char* filter) {}
 glm::vec3 g_CamPos = { 0, 0, 0 };
 glm::vec2 g_CamRot = { 0, 0 };
 
-struct sleveldata_t
-{
-    level_t level;
-    GLuint texid = 0;
-    bool open = false;
-} leveldata;
-
 struct Vertex
 {
     glm::vec3 position;
@@ -104,6 +97,13 @@ static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 
     g_CamPos += GetForwardVector() * (float)yoffset;
 }
+
+struct sleveldata_t
+{
+    level_t level;
+    GLuint texid = 0;
+    bool open = false;
+};
 
 static void mouse_callback(GLFWwindow* window, double x, double y)
 {
@@ -155,9 +155,6 @@ static void mousebtn_callback(GLFWwindow* window, int button, int action, int mo
     }
 }
 
-glm::mat4 camera(const glm::mat4& model);
-
-//void createlinemodel(glm::vec3 start, glm::vec3 end);
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
@@ -166,24 +163,6 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     if (key == GLFW_KEY_X && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
     {
         SetWireframe(!wireframe);
-    }
-    else if (key == GLFW_KEY_C && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
-    {
-        // code for generating a line from the camera
-        //auto mat4 = glm::inverse(camera(glm::identity<glm::mat4>()));
-        //double x, y;
-        //int w, h;
-        //glfwGetWindowSize(window, &w, &h);
-        //glfwGetCursorPos(window, &x, &y);
-        //glm::vec4 v{ x / w * 2, -y / h * 2, -1, 1};
-        //v.x -= 1;
-        //v.y += 1;
-        //glm::vec4 nr = mat4 * v;
-        //v.z = 1;
-        //glm::vec4 fr = mat4 * v;
-        //
-        //glm::vec3 lineVector = glm::normalize(glm::vec3(fr / fr.w - nr / nr.w)) * 1000.f;
-        //createlinemodel(g_CamPos, g_CamPos + (glm::normalize(glm::vec3(fr / fr.w - nr / nr.w)) * 10.f));
     }
 }
 
@@ -199,9 +178,6 @@ glm::mat4 camera(const glm::mat4& model)
     {
         int w, h;
         glfwGetWindowSize(g_Window, &w, &h);
-        if (w == 0 || h == 0)
-            return model;
-
         Projection = glm::perspective(glm::pi<float>() * 0.25f, w / (float)h, 0.1f, 1000.f);
         View = glm::lookAt(g_CamPos, g_CamPos + GetForwardVector() * 10.f, GetUpVector());
         cameraInvalidated = false;
@@ -221,9 +197,6 @@ bool IsBillboardObject(const std::string& name)
     const char* BillboardObjectNames[] = {
         "nflame__",
         "mflame__",
-        "magic___",
-
-        "invis___",
 
         "charger_",
         "steam___",
@@ -367,22 +340,15 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
             auto& v = model->vertices[p.vertex[i]];
             ptr->vertices.push_back({ {v.x / 1000.f, v.y / 1000.f, v.z / 1000.f}, {v.r / 255.f, v.g / 255.f, v.b / 255.f, v.a / 255.f}, p.uvs[i] });
             if (p.materialID == 0xFFFF'FFFF)
-                if ((p.flags & 0x2) == 0 && model->name != "@Level")
+                if (model->hasNoTextures)
                 {
-                    auto& c = ptr->vertices.back().color;
-                    if (p.optColors[3] != 0)
-                    {
-                        c.r = p.optColors[0] / 255.f;
-                        c.g = p.optColors[1] / 255.f;
-                        c.b = p.optColors[2] / 255.f;
-                        c.a = 1.f;
-                    }
+                    auto& c = ptr->vertices.rbegin()->color;
                     c.r /= 2;
                     c.g /= 2;
                     c.b /= 2;
                 }
                 else
-                    ptr->vertices.back().color.a = 0.f;
+                    ptr->vertices.rbegin()->color.a = 0.f;
         }
     }
 
@@ -394,18 +360,6 @@ std::shared_ptr<globj_t> createobj(std::shared_ptr<Model> model)
 
     return ptr;
 }
-
-//void createlinemodel(glm::vec3 start, glm::vec3 end)
-//{
-//    static int i = 0;
-//    std::shared_ptr<Model> m = std::make_shared<Model>(0xFFFF'0000 + (i++));
-//    m->instances.push_back({{ 0, 0, 0 }, { 0, 0, 0 } });
-//    m->hasNoTextures = true;
-//    m->name = "@DEBUG-Line-" + std::to_string(i);
-//    AddLineToModel(m, start * 1000.f, end * 1000.f);
-//    mdls.push_back(createobj(m));
-//    leveldata.level.models.push_back(m);
-//}
 
 ImVec4 bgColor = { 0xBB / 255.f, 0xF6 / 255.f, 0xF7 / 255.f, 255 };
 
@@ -478,20 +432,6 @@ bool str_ends_with_nocase(std::string src, std::string trg)
     return true;
 }
 
-bool ImGui_CenteredButton(const char* label)
-{
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    float size = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
-    float avail = ImGui::GetContentRegionAvail().x;
-
-    ImGui::Spacing();
-    float off = (avail - size) * 0.5f;
-    if (off > 0.0f)
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
-    return ImGui::Button(label);
-};
-
 void DumpObjects(FILE* f, sleveldata_t& leveldata);
 void ExportModel(FILE* f, std::shared_ptr<Model> mdl);
 void ExportTextureSheet(FILE* f, sleveldata_t& leveldata);
@@ -522,6 +462,8 @@ int main()
     if (!LoadShader(program, { "../data/shaders/basic.vert", "../data/shaders/basic.frag" }))
         if (!LoadShader(program, { "./data/shaders/basic.vert", "./data/shaders/basic.frag" }))
             return 1;
+
+    sleveldata_t leveldata;
 
     std::vector<Vertex> vertices = {
         {{-10, -10, 50}, {0.5f, 0.5f, 0.5f, 0.5f}, {1, 1}},
@@ -609,6 +551,21 @@ int main()
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
+
+            // Temporary load button, +code to center it
+            auto ImGui_CenteredButton = [](const char* label) -> bool
+                {
+                    ImGuiStyle& style = ImGui::GetStyle();
+
+                    float size = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
+                    float avail = ImGui::GetContentRegionAvail().x;
+
+                    ImGui::Spacing();
+                    float off = (avail - size) * 0.5f;
+                    if (off > 0.0f)
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
+                    return ImGui::Button(label);
+                };
 
             if (ImGui::Checkbox("Toggle Wireframe Mode?", &wireframe))
                 SetWireframe(wireframe);
@@ -726,65 +683,6 @@ int main()
                 }
             }
 
-            {
-                ImGui::Separator();
-                static char offsetInput[32] = { 0 };
-                static size_t offsetOutput = 0;
-
-                {
-                    float size = ImGui::CalcItemWidth() + style.FramePadding.x * 2.0f;
-                    float avail = ImGui::GetWindowContentRegionMax().x;
-
-                    ImGui::Spacing();
-                    float off = (avail - size) * 0.5f;
-                    if (off > 0.0f)
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
-                }
-
-                ImGui::InputText("##OffsetConvert", offsetInput, 31, ImGuiInputTextFlags_NoUndoRedo | ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_CharsHexadecimal);
-                if (ImGui_CenteredButton("Convert to File Offset"))
-                {
-                    offsetOutput = 0;
-                    size_t len = strnlen(offsetInput, 31);
-                    for (size_t i = 0; i < len; ++i)
-                    {
-                        size_t n = 0;
-                        if ('0' <= offsetInput[i] && offsetInput[i] <= '9')
-                            n = offsetInput[i] - '0';
-                        else if ('a' <= offsetInput[i] && offsetInput[i] <= 'f')
-                            n = (offsetInput[i] - 'a') + 10;
-                        else if ('A' <= offsetInput[i] && offsetInput[i] <= 'F')
-                            n = (offsetInput[i] - 'A') + 10;
-
-                        offsetOutput += (n << (4 * ((len - 1) - i)));
-
-                    }
-
-                    offsetOutput += leveldata.level.baseData;
-                }
-                if (ImGui_CenteredButton("Convert from File Offset"))
-                {
-                    offsetOutput = 0;
-                    size_t len = strnlen(offsetInput, 31);
-                    for (size_t i = 0; i < len; ++i)
-                    {
-                        size_t n = 0;
-                        if ('0' <= offsetInput[i] && offsetInput[i] <= '9')
-                            n = offsetInput[i] - '0';
-                        else if ('a' <= offsetInput[i] && offsetInput[i] <= 'f')
-                            n = (offsetInput[i] - 'a') + 10;
-                        else if ('A' <= offsetInput[i] && offsetInput[i] <= 'F')
-                            n = (offsetInput[i] - 'A') + 10;
-
-                        offsetOutput += (n << (4 * ((len - 1) - i)));
-
-                    }
-
-                    offsetOutput -= leveldata.level.baseData;
-                }
-                ImGui::Text("Calculated Offset: 0x%.6X", offsetOutput);
-            }
-
             const char* msg = "Shoutout to the /r/Gex Discord";
             float sizey = ImGui::CalcTextSize(msg).y + style.FramePadding.y * 2.0f;
             float availy = ImGui::GetContentRegionAvail().y;
@@ -864,7 +762,10 @@ int main()
                 ImGui::SameLine();
                 if (ImGui::Button("Dump Object Info"))
                 {
-                    auto path = OpenSavePrompt("JSON File (*.json)\0*.json\0All files (*.*)\0*.*\0", levelPath + ".json");
+                    std::string levelPathNoExtension = levelPath;
+                    levelPathNoExtension.resize(levelPathNoExtension.length() - 4);
+
+                    auto path = OpenSavePrompt("JSON File (*.json)\0*.json\0All files (*.*)\0*.*\0", levelPathNoExtension + ".json");
                     if (!path.empty())
                     {
                         if (!str_ends_with_nocase(path, ".json"))
@@ -968,8 +869,6 @@ int main()
                             {
                                 ImGui::Text("Address: 0x%.6x", inst.address);
                             }
-                            for (auto& c : inst.components)
-                                c->RenderGUI(leveldata.level, (void*)leveldata.texid);
                             ImGui::Text("Instance Data:\n");
                             for (int i = 0; i < 16; ++i)
                             {
@@ -988,7 +887,6 @@ int main()
                             {
                                 g_CamPos = -inst.position;
                             }
-
                             ImGui::Separator();
                         }
                         ImGui::Unindent(8.f);
@@ -1026,10 +924,8 @@ int main()
 
 void DumpObjects(FILE* f, sleveldata_t& leveldata)
 {
-    fwrite("{\n", 2, 1, f);
+    fwrite("{\n\"objects\": \n[", 15, 1, f);
     char buffer[1024];
-    sprintf_s(buffer, "\t\"raw_objects\": {\n");
-    fwrite(buffer, strnlen(buffer, 1024), 1, f);
     for (size_t i = 0; i < leveldata.level.models.size(); ++i)
     {
         auto& mdl = leveldata.level.models[i];
@@ -1041,118 +937,50 @@ void DumpObjects(FILE* f, sleveldata_t& leveldata)
             else
                 objName = "???";
         }
-        sprintf_s(buffer, "\t\t\"%s\": [\n", objName.c_str());
-        fwrite(buffer, strnlen(buffer, 1024), 1, f);
+
         for (size_t j = 0; j < mdl->instances.size(); ++j)
         {
+            std::string levelPathNoExtension = levelPath;
+            levelPathNoExtension.resize(levelPathNoExtension.length() - 4);
             auto& inst = mdl->instances[j];
-            sprintf_s(buffer, "\t\t\t{ \"pos\": [%d, %d, %d], \"rot\": [%.6f, %.6f, %.6f] }",
-                (int)(inst.position.x * -1000),
-                (int)(inst.position.y * -1000),
-                (int)(inst.position.z * 1000),
-                (inst.rotation.x),
-                (inst.rotation.y),
-                (inst.rotation.z)
+            if (objName == "@Level")
+            {
+                sprintf_s(buffer, "\n{\n\"name\": \"%s\"\,\n", levelPathNoExtension.c_str());
+                fwrite(buffer, strnlen(buffer, 1024), 1, f);
+            }
+            else
+            {
+                sprintf_s(buffer, "\n{\n\"name\": \"%s\"\,\n", objName.c_str());
+                fwrite(buffer, strnlen(buffer, 1024), 1, f);
+            }
+
+            sprintf_s(buffer, "\"xPos\": \"% f\", \n\"yPos\": \"% f\", \n\"zPos\": \"% f\", \n\"xRot\": \"%.6f\", \n\"yRot\": \"%.6f\", \n\"zRot\": \"%.6f\"\n\}",
+                (inst.position.x * 1),
+                (inst.position.y * -1),
+                (inst.position.z * -1),
+                (inst.rotation.x * 180 / glm::pi<float>()),
+                (inst.rotation.y * 180 / glm::pi<float>()),
+                (inst.rotation.z * 180 / glm::pi<float>())
             );
             fwrite(buffer, strnlen(buffer, 1024), 1, f);
-            if ((j + 1) < mdl->instances.size())
-                fwrite(",\n", 2, 1, f);
-        }
-        fwrite("\n\t\t]", 4, 1, f);
-        if ((i + 1) < leveldata.level.models.size())
-            fwrite(",\n", 2, 1, f);
-    }
-    fwrite("\n\t},\n", 4, 1, f);
-    fwrite("\"paths\": [", 10, 1, f);
-    std::string pstr;
-    for (auto& path : leveldata.level.paths)
-    {
-        pstr += "\n\t\t{\n\t\t\t\"owner_instance\": " + std::to_string(path.owner);
-        pstr += ",\n\t\t\t\"points\": [";
-        for (auto& pt : path.points)
-        {
-            sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"pos\": [%d, %d, %d]},", pt.speed, pt.x, pt.z, pt.y);
-            pstr += buffer;
-        }
-        if (pstr.back() == ',')
-            pstr.pop_back();
-        pstr += "\n\t\t\t],\n\t\t\t\"rotations\":[";
-        for (auto& pt : path.rotations)
-        {
-            sprintf_s(buffer, "\n\t\t\t\t{\"speed\":%d, \"rot\": [%f, %f, %f, %f]},", pt.speed, pt.rotX, pt.rotY, pt.rotZ, pt.rotW);
-            pstr += buffer;
-        }
-        if (pstr.back() == ',')
-            pstr.pop_back();
-        pstr += "\n\t\t\t]\n\t\t},";
-    }
-    if (pstr.back() == ',')
-        pstr.pop_back();
-    fwrite(pstr.data(), pstr.length(), 1, f);
-    fwrite("\n\t],\n", 5, 1, f);
-    fwrite("\t\"pickups\": [", 13, 1, f);
 
-    for (int i = 0; i < 3; ++i)
-    {
-        const char* const p = leveldata.level.pickupName[i];
-        if (strncmp(p, "gameboy_", 8) == 0 || strncmp(p, "remgold_", 8) == 0)
-            continue; // not real collectibles
-
-        std::string s = "\n\t\t{\n\t\t\t\"type\": \"" + std::string(p) + "\", \"instances\": [";
-        if (auto it = std::find_if(
-            leveldata.level.models.begin(),
-            leveldata.level.models.end(),
-            [p](std::shared_ptr<Model> m)
+            if ((i + 1) < leveldata.level.models.size())
             {
-                return m->name == p;
-            });
-            it != leveldata.level.models.end()
-                )
-        {
-            for (auto& inst : (*it)->instances)
-            {
-                sprintf_s(buffer, "\n\t\t\t\t[%d, %d, %d],",
-                    (int)(inst.position.x * -1000),
-                    (int)(inst.position.y * -1000),
-                    (int)(inst.position.z * 1000));
-                s += buffer;
+                if ((j) < mdl->instances.size())
+                {
+                    fwrite(",", 1, 1, f);
+                }
             }
-            if ((*it)->instances.size() > 0)
-                s.pop_back();
-        }
-        s += "\n\t\t\t]\n\t\t},";
-        fwrite(s.data(), s.length(), 1, f);
-    }
-
-    {
-        std::string s = "\n\t\t{\n\t\t\t\"type\": \"cold____\", \"instances\": [";
-        if (auto it = std::find_if(
-            leveldata.level.models.begin(),
-            leveldata.level.models.end(),
-            [](std::shared_ptr<Model> m)
+            if ((i - leveldata.level.models.size() + 1) < leveldata.level.models.size())
             {
-                return m->name == "cold____";
-            });
-            it != leveldata.level.models.end()
-                )
-        {
-            for (auto& inst : (*it)->instances)
-            {
-                sprintf_s(buffer, "\n\t\t\t\t[%d, %d, %d],",
-                    (int)(inst.position.x * -1000),
-                    (int)(inst.position.y * -1000),
-                    (int)(inst.position.z * 1000));
-                s += buffer;
+                if ((j + 1) < mdl->instances.size())
+                {
+                    fwrite(",", 1, 1, f);
+                }
             }
-            if ((*it)->instances.size() > 0)
-                s.pop_back();
         }
-        s += "\n\t\t\t]\n\t\t}";
-        fwrite(s.data(), s.length(), 1, f);
     }
-
-    fwrite("\n\t]", 3, 1, f);
-    fwrite("\n}", 2, 1, f);
+    fwrite("\n]\n}", 4, 1, f);
     fclose(f);
 }
 
