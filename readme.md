@@ -1,19 +1,13 @@
-# What is this?
-This project is the beginning of a level viewer, and eventually, level editor for Gex 2: Enter the Gecko.
-The engine is currently set up to work with the PC build and its files.
+## Gex3DViewer to JSON Level Viewer
+Read JSON files to view 3d models and their positions and rotations from Gex: Enter the Gecko
 
-# How to use
-Open up the level viewer, and pick a level file (.dfx). Make sure its matching graphics file (.vfx) is in the same directory, as the program will automatically load it up at the same time.
+![alt text](https://keehanroberts.com/images/github/gex-json_0.png "Gex3DViewer to JSON Level Viewer Screenshot 0")
 
-## Keys
-To move around, use WASD.
-To look around, right click in the window and move your cursor, or use the mouse wheel at any time.
+### Instructions
+- Load a .DFX level from Gex: Enter the Gecko and "Dump Object Info" in Gex3DViewer<br />
+- Save .json file in to JSON Level Viewer (Assets/Resources for project source, StreamingAssets for release)
 
-## Hotkeys:
-Ctrl+X: Toggle Wireframe
-- ON: enable vertex colors and textures
-- OFF: disable vertex colors and textures
+![alt text](https://keehanroberts.com/images/github/gex-json_1.png "Gex3DViewer to JSON Level Viewer Screenshot 0")
 
-# Building
-This project is built using CMAKE.
-The project can be generated and re-generated with the provided batch file. C++20 is used.
+- You can export 3D models from Gex: Enter the Gecko using a tool by Roboguy420 called gex2ps1modelexporter<br />
+- These models and textures belong in the corresponding .json folder. For example (junk1.json is in folder junk1 along with models and textures)
